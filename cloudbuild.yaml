@@ -1,14 +1,14 @@
-# Cloud Build pipeline to build and deploy the Next.js frontend (in ./frontend) to Cloud Run
+# Cloud Build pipeline to build and deploy the Python FastAPI backend to Cloud Run
 
 substitutions:
-  _SERVICE: "rageducation-frontend"
+  _SERVICE: "rageducation-backend"
   _REGION: "europe-west1"
-  _IMAGE: "gcr.io/$PROJECT_ID/rageducation-frontend:latest"
+  _IMAGE: "gcr.io/$PROJECT_ID/rageducation-backend:latest"
 
 steps:
-  # Build container using the root Dockerfile (copies from ./frontend)
+  # Build container using backend Dockerfile
   - name: gcr.io/cloud-builders/docker
-    args: ["build", "-t", "${_IMAGE}", "-f", "Dockerfile", "."]
+    args: ["build", "-t", "${_IMAGE}", "-f", "Dockerfile.api", "."]
 
   # Push container image
   - name: gcr.io/cloud-builders/docker
@@ -24,7 +24,7 @@ steps:
         "--region", "${_REGION}",
         "--platform", "managed",
         "--allow-unauthenticated",
-        "--port", "8080"
+        "--port", "8000"
       ]
 
 images:
