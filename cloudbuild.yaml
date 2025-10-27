@@ -1,0 +1,31 @@
+# Cloud Build pipeline to build and deploy the Next.js frontend (in ./frontend) to Cloud Run
+
+substitutions:
+  _SERVICE: "rageducation-frontend"
+  _REGION: "europe-west1"
+  _IMAGE: "gcr.io/$PROJECT_ID/rageducation-frontend:latest"
+
+steps:
+  # Build container using the root Dockerfile (copies from ./frontend)
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-t", "${_IMAGE}", "-f", "Dockerfile", "."]
+
+  # Push container image
+  - name: gcr.io/cloud-builders/docker
+    args: ["push", "${_IMAGE}"]
+
+  # Deploy to Cloud Run (fully managed)
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      [
+        "run", "deploy", "${_SERVICE}",
+        "--image", "${_IMAGE}",
+        "--region", "${_REGION}",
+        "--platform", "managed",
+        "--allow-unauthenticated",
+        "--port", "8080"
+      ]
+
+images:
+  - ${_IMAGE}
