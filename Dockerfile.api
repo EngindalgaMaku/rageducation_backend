@@ -34,8 +34,7 @@ FROM dependencies AS runtime
 
 # Copy application source (this changes frequently)
 COPY src ./src
-COPY data ./data
-COPY .env* ./
+RUN mkdir -p /app/data
 
 EXPOSE 8000
 
