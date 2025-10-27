@@ -14,13 +14,6 @@ from pydantic import BaseModel
 
 # Reuse existing logic from the project
 # Temporarily commented out to fix Streamlit import issue
-from src.app_logic import (
-    get_session_index_path,
-    get_store,
-    add_document_to_store,
-    retrieve_and_answer,
-    get_selected_provider,
-)
 from src.utils.language_detector import detect_query_language
 from src.vector_store.faiss_store import FaissVectorStore
 from src.services.session_manager import (
