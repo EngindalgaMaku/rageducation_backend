@@ -40,7 +40,6 @@ gcloud run deploy ${SERVICE_NAME} \
   --max-instances 3 \
   --timeout 1800 \
   --concurrency 2 \
-  --port 8080 \
   --set-env-vars "ENVIRONMENT=production,LOG_LEVEL=INFO"
 
 # Step 4: Get the service URL
