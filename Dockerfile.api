@@ -1,0 +1,43 @@
+# Multi-stage build for better caching - Dependencies Layer
+FROM python:3.13-slim AS dependencies
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+# System deps for marker-pdf and other dependencies
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       build-essential \
+       curl \
+       git \
+       libgl1-mesa-dev \
+       libglib2.0-0 \
+       libsm6 \
+       libxext6 \
+       libxrender1 \
+       libgomp1 \
+       libgcc-s1 \
+       ffmpeg \
+       libfontconfig1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install Python deps - THIS LAYER WILL BE CACHED
+COPY requirements-minimal.txt ./
+RUN pip install --upgrade pip \
+    && pip install -r requirements-minimal.txt
+
+# Runtime stage - Only rebuilds when source changes
+FROM dependencies AS runtime
+
+# Copy application source (this changes frequently)
+COPY src ./src
+COPY data ./data
+COPY .env* ./
+
+EXPOSE 8000
+
+# Default command: run FastAPI
+CMD python -m uvicorn src.api.main:app --host 0.0.0.0 --port ${PORT:-8000}

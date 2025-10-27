@@ -1,0 +1,36 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pytest_cache/
+
+# Git
+.git/
+.gitignore
+
+# Virtualenvs
+.venv/
+venv/
+ENV/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Notebooks checkpoints
+.ipynb_checkpoints/
+
+# Build/Dist
+build/
+dist/
+*.egg-info/
+
+# Logs
+logs/*
+!logs/.gitkeep
+
+# Large artifacts (keep data for runtime)
+# Exclude local backups/exports if image size matters
+# data/backups/
+# data/exports/

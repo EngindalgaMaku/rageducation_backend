@@ -1,0 +1,52 @@
+# Frontend
+/frontend/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+.env
+
+# Veritabanı ve Veri Dosyaları
+/data/
+*.db
+*.db-journal
+*.sqlite3
+*.sqlite3-journal
+*.index
+*.chunks
+*.meta.jsonl
+srcdata.zip
+
+# Loglar ve Raporlar
+/logs/
+*.log
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+performance_test_results.json
+
+# Test ve Cache
+.pytest_cache/
+.cache/
+.hypothesis/
+
+# IDE ve Editör Dosyaları
+.vscode/
+.idea/
+
+# İşletim Sistemi Dosyaları
+.DS_Store
+Thumbs.db
+
+# Diğer
+/colab_notebooks/
+/dist/
+/build/
+*.egg-info/

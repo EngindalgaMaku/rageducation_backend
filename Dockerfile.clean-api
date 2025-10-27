@@ -1,0 +1,16 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Copy minimal requirements for clean API
+COPY requirements-clean.txt .
+RUN pip install --no-cache-dir -r requirements-clean.txt
+
+# Copy only the clean API file
+COPY clean_api_main.py .
+
+# Expose port
+EXPOSE 8003
+
+# Run the clean API
+CMD ["uvicorn", "clean_api_main:app", "--host", "0.0.0.0", "--port", "8003"]
