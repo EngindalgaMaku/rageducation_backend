@@ -1,60 +1,73 @@
 #!/bin/bash
 
-# Cloud Run Deployment Script for RAG3 API
-# Run this in Google Cloud Shell after uploading your files
+# Google Cloud Shell Deployment Script for RAG3 API
+# Deploy RAG API with PDF Marker and Sentence Transformers to Google Cloud Run
 
-set -e
+set -e  # Exit on any error
 
-echo "🚀 Starting RAG3 API Deployment to Cloud Run..."
+echo "🚀 Starting Google Cloud Run deployment for RAG3 API..."
 
-# Get project ID
+# Configuration
 PROJECT_ID=$(gcloud config get-value project)
-echo "📝 Project ID: $PROJECT_ID"
-
-# Set region
-REGION="europe-west1"
 SERVICE_NAME="rag3-api"
-IMAGE_NAME="gcr.io/$PROJECT_ID/rag3-api-fixed"
+REGION="europe-west1"  # Closest to Turkey
+IMAGE_NAME="gcr.io/${PROJECT_ID}/${SERVICE_NAME}"
 
-echo "🏗️  Building container image..."
-gcloud builds submit --tag $IMAGE_NAME .
+echo "📋 Project: ${PROJECT_ID}"
+echo "🌍 Region: ${REGION}"
+echo "🖼️  Image: ${IMAGE_NAME}"
 
+# Step 1: Enable required APIs
+echo "🔧 Enabling required Google Cloud APIs..."
+gcloud services enable cloudbuild.googleapis.com
+gcloud services enable run.googleapis.com
+gcloud services enable containerregistry.googleapis.com
+
+# Step 2: Build Docker image in Cloud Build
+echo "🏗️  Building Docker image with Cloud Build..."
+gcloud builds submit --tag ${IMAGE_NAME} .
+
+# Step 3: Deploy to Cloud Run with academic-optimized settings
 echo "🚀 Deploying to Cloud Run..."
-gcloud run deploy $SERVICE_NAME \
-  --image $IMAGE_NAME \
+gcloud run deploy ${SERVICE_NAME} \
+  --image ${IMAGE_NAME} \
   --platform managed \
-  --region $REGION \
+  --region ${REGION} \
   --allow-unauthenticated \
-  --memory 4Gi \
-  --cpu 2 \
-  --concurrency 5 \
-  --max-instances 3 \
+  --memory 8Gi \
+  --cpu 4 \
   --min-instances 0 \
-  --timeout 1800s \
+  --max-instances 3 \
+  --timeout 1800 \
+  --concurrency 2 \
+  --port 8080 \
+  --set-env-vars "ENVIRONMENT=production,LOG_LEVEL=INFO"
 
-echo "✅ Deployment completed!"
+# Step 4: Get the service URL
+echo "🎉 Deployment complete!"
+SERVICE_URL=$(gcloud run services describe ${SERVICE_NAME} --region=${REGION} --format='value(status.url)')
+echo "📍 Service URL: ${SERVICE_URL}"
 
-# Get service URL
-SERVICE_URL=$(gcloud run services describe $SERVICE_NAME --platform managed --region $REGION --format 'value(status.url)')
-echo "🌐 Service URL: $SERVICE_URL"
-
+# Step 5: Test the deployment
 echo "🧪 Testing deployment..."
-curl -s "$SERVICE_URL/health" || echo "Health check failed, but service might still be starting..."
+echo "Testing health endpoint..."
+curl -s "${SERVICE_URL}/health"
+echo ""
+
+echo "Testing models endpoint..."
+curl -s "${SERVICE_URL}/models"
+echo ""
 
 echo ""
-echo "🎉 Deployment Summary:"
-echo "   - Project: $PROJECT_ID"
-echo "   - Service: $SERVICE_NAME"
-echo "   - Region: $REGION"
-echo "   - URL: $SERVICE_URL"
-echo "   - Memory: 4GB"
-echo "   - CPU: 2 vCPUs"
-echo "   - Max Instances: 3"
-echo "   - Academic Cost Optimized: ✅"
+echo "✅ Deployment successful!"
+echo "🌐 Your RAG API is now running at: ${SERVICE_URL}"
+echo "📊 PDF Marker and Sentence Transformers are included"
 echo ""
-echo "🔗 Test your API:"
-echo "   Health: $SERVICE_URL/health"
-echo "   Models: $SERVICE_URL/models"
-echo "   Configure: $SERVICE_URL/configure_and_process"
+echo "📝 Key endpoints to test:"
+echo "  - Health: ${SERVICE_URL}/health"
+echo "  - Models: ${SERVICE_URL}/models"
+echo "  - Process: ${SERVICE_URL}/configure_and_process"
 echo ""
-echo "💰 Expected monthly cost: $4-8 for typical thesis usage"
+echo "📈 Monitor your service:"
+echo "  gcloud run services describe ${SERVICE_NAME} --region=${REGION}"
+echo "  gcloud logging read 'resource.type=cloud_run_revision AND resource.labels.service_name=${SERVICE_NAME}' --limit=50"

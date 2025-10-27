@@ -1,6 +1,5 @@
 import os
 import re
-import ollama
 import time
 from datetime import datetime
 from src import config as app_config
@@ -314,17 +313,8 @@ def retrieve_and_answer(
                         max_tokens=64
                     )
                 else:
-                    # Use Ollama
-                    client = ollama.Client(host=app_config.OLLAMA_BASE_URL)
-                    rr = client.chat(
-                        model=model_to_use,
-                        messages=[
-                            {"role": "system", "content": rerank_system_prompt},
-                            {"role": "user", "content": rerank_prompt},
-                        ],
-                        options={"temperature": 0.0, "num_predict": 64},
-                    )
-                    order_raw = rr.get("message", {}).get("content", "")
+                    # Ollama logic removed as it's no longer used
+                    order_raw = ""
                 
                 idxs = [int(x)-1 for x in re.findall(r"\d+", order_raw)]
                 idxs = [i for i in idxs if 0 <= i < len(retrieved_texts)]
@@ -378,20 +368,10 @@ def retrieve_and_answer(
                     max_tokens=1024
                 )
             else:
-                # Use Ollama
-                client = ollama.Client(host=app_config.OLLAMA_BASE_URL)
-                resp = client.chat(
-                    model=model_to_use,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    options={
-                        "temperature": 0.3,
-                        "num_predict": 1024,
-                    },
-                )
-                answer = resp.get("message", {}).get("content", "").strip()
+                # Ollama logic removed, this path should ideally not be taken
+                # if all models are configured for Groq.
+                # Returning an empty answer as a fallback.
+                answer = "Model not configured for cloud provider."
 
         # Calculate total response time and update monitor
         if track_performance and monitor:
@@ -444,20 +424,8 @@ def generate_answer_from_context(retrieved_texts: list[str], query: str, generat
                 max_tokens=1024
             )
         else:
-            # Use Ollama
-            client = ollama.Client(host=app_config.OLLAMA_BASE_URL)
-            resp = client.chat(
-                model=model_to_use,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                options={
-                    "temperature": 0.3,
-                    "num_predict": 1024,
-                },
-            )
-            return resp.get("message", {}).get("content", "").strip()
+            # Ollama logic removed
+            return "Model not configured for cloud provider."
     except Exception as e:
         error_msg = prompt_manager.get_error_message(detected_language, 'generation_error', str(e))
         return error_msg
@@ -491,20 +459,8 @@ def direct_answer(query: str, generation_model: str | None = None) -> str:
                 max_tokens=512
             )
         else:
-            # Use Ollama
-            client = ollama.Client(host=app_config.OLLAMA_BASE_URL)
-            resp = client.chat(
-                model=model_to_use,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": query},
-                ],
-                options={
-                    "temperature": 0.4,
-                    "num_predict": 512,
-                },
-            )
-            return resp.get("message", {}).get("content", "").strip()
+            # Ollama logic removed
+            return "Model not configured for cloud provider."
     except Exception as e:
         error_msg = prompt_manager.get_error_message(detected_language, 'direct_answer_error', str(e))
         return error_msg
@@ -599,20 +555,8 @@ def generate_multiple_answers(
                     max_tokens=1024
                 )
             else:
-                # Use Ollama
-                client = ollama.Client(host=app_config.OLLAMA_BASE_URL)
-                resp = client.chat(
-                    model=model_to_use,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    options={
-                        "temperature": temperature,
-                        "num_predict": 1024,
-                    },
-                )
-                answer = resp.get("message", {}).get("content", "").strip()
+                # Ollama logic removed
+                answer = "Model not configured for cloud provider."
             
             if answer:
                 results.append((answer, answer_texts, answer_scores, answer_metas))
