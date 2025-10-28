@@ -9,21 +9,8 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-# Import the enhanced PDF processor
-from src.document_processing.enhanced_pdf_processor import process_pdf_with_analysis
-
-# Reuse existing logic from the project
-from src.app_logic import retrieve_and_answer
-from src.embedding.embedding_generator import generate_embeddings, get_selected_provider
-from src.text_processing.text_chunker import chunk_text
-from src.utils.language_detector import detect_query_language
-from src.utils.logger import get_logger
-from src.vector_store.faiss_store import FaissVectorStore
-from src.services.session_manager import (
-    professional_session_manager,
-    SessionCategory,
-    SessionStatus,
-)
+# Lazy imports - import heavy modules only when needed to speed up startup
+# These will be imported in functions where they're actually used
 
 app = FastAPI(title="RAG3 API", version="0.1.0")
 
@@ -172,6 +159,7 @@ def health():
 
 @app.get("/changelog", response_model=List[ChangelogEntry])
 def get_changelog():
+    from src.services.session_manager import professional_session_manager
     with professional_session_manager.get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT id, version, date, changes FROM changelog ORDER BY date DESC")
@@ -188,6 +176,7 @@ def get_changelog():
 
 @app.post("/changelog", response_model=ChangelogEntry)
 def create_changelog_entry(req: CreateChangelogEntryRequest):
+    from src.services.session_manager import professional_session_manager
     with professional_session_manager.get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
@@ -206,6 +195,7 @@ def create_changelog_entry(req: CreateChangelogEntryRequest):
 @app.get("/sessions", response_model=List[SessionResponse])
 def list_sessions(created_by: Optional[str] = None, category: Optional[SessionCategory] = None,
                   status: Optional[SessionStatus] = None, limit: int = 50):
+    from src.services.session_manager import professional_session_manager, SessionCategory, SessionStatus
     sessions = professional_session_manager.list_sessions(
         created_by=created_by,
         category=category,
@@ -240,6 +230,7 @@ def list_sessions(created_by: Optional[str] = None, category: Optional[SessionCa
 
 @app.post("/sessions", response_model=SessionResponse)
 def create_session(req: CreateSessionRequest):
+    from src.services.session_manager import professional_session_manager
     try:
         meta = professional_session_manager.create_session(
             name=req.name,
@@ -279,6 +270,7 @@ def create_session(req: CreateSessionRequest):
 
 @app.get("/sessions/{session_id}", response_model=SessionResponse)
 def get_session(session_id: str):
+    from src.services.session_manager import professional_session_manager
     meta = professional_session_manager.get_session_metadata(session_id)
     if not meta:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -307,6 +299,7 @@ def get_session(session_id: str):
 
 @app.delete("/sessions/{session_id}")
 def delete_session(session_id: str, create_backup: bool = True, deleted_by: Optional[str] = None):
+    from src.services.session_manager import professional_session_manager
     ok = professional_session_manager.delete_session(session_id, create_backup=create_backup, deleted_by=deleted_by)
     if not ok:
         raise HTTPException(status_code=404, detail="Session not found or delete failed")
@@ -324,6 +317,7 @@ async def upload_document(
 ):
     # Resolve store by session_id (backward-compatible path handling)
     # Temporary fix: use basic path resolution
+    from src.vector_store.faiss_store import FaissVectorStore
     import os
     os.makedirs("data/vector_db/sessions", exist_ok=True)
     safe = session_id.strip().replace(" ", "_") or "default"
@@ -351,6 +345,8 @@ async def upload_document(
 
 @app.post("/rag/query", response_model=RAGQueryResponse)
 def rag_query(req: RAGQueryRequest):
+    from src.vector_store.faiss_store import FaissVectorStore
+    from src.app_logic import retrieve_and_answer, label_from_meta
     # Resolve store
     import os
     os.makedirs("data/vector_db/sessions", exist_ok=True)
@@ -376,7 +372,6 @@ def rag_query(req: RAGQueryRequest):
         # Create source labels from metadata
         source_labels = []
         if sources:
-            from src.app_logic import label_from_meta
             for i, (text, meta) in enumerate(zip(sources, metas)):
                 source_labels.append(label_from_meta(meta, text))
 
@@ -535,11 +530,13 @@ def add_markdown_documents_to_session(req: AddMarkdownDocumentsRequest):
     """
     try:
         # Validate session exists
+        from src.services.session_manager import professional_session_manager
         session_meta = professional_session_manager.get_session_metadata(req.session_id)
         if not session_meta:
             raise HTTPException(status_code=404, detail="Session not found")
         
         # Get the session's vector store
+        from src.vector_store.faiss_store import FaissVectorStore
         import os
         os.makedirs("data/vector_db/sessions", exist_ok=True)
         safe = req.session_id.strip().replace(" ", "_") or "default"
@@ -621,6 +618,7 @@ def configure_and_process_rag(req: RAGConfigureAndProcessRequest):
     """
     try:
         # Validate session exists
+        from src.services.session_manager import professional_session_manager
         session_meta = professional_session_manager.get_session_metadata(req.session_id)
         if not session_meta:
             raise HTTPException(status_code=404, detail="Session not found")
@@ -629,6 +627,7 @@ def configure_and_process_rag(req: RAGConfigureAndProcessRequest):
         _clear_session_data(req.session_id)
         
         # Get the session's vector store (will be recreated as needed)
+        from src.vector_store.faiss_store import FaissVectorStore
         import os
         os.makedirs("data/vector_db/sessions", exist_ok=True)
         safe = req.session_id.strip().replace(" ", "_") or "default"
