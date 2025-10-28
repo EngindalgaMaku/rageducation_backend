@@ -385,13 +385,20 @@ def rag_query(req: RAGQueryRequest):
         raise HTTPException(status_code=500, detail=f"RAG query failed: {e}")
 
 
-@app.post("/documents/convert-pdf-to-markdown", response_model=PDFToMarkdownResponse)
-async def convert_pdf_to_markdown(file: UploadFile = File(...)):
+@app.post("/documents/convert-document-to-markdown", response_model=PDFToMarkdownResponse)
+async def convert_document_to_markdown(file: UploadFile = File(...)):
     """
-    Convert uploaded PDF to Markdown format and save to data/markdown/ directory.
+    Convert uploaded document (PDF, DOCX, PPTX, XLSX) to Markdown format and save to data/markdown/ directory.
+    Uses Marker library with full format support.
     """
-    if not file.filename.lower().endswith('.pdf'):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+    supported_extensions = ['.pdf', '.docx', '.pptx', '.xlsx']
+    file_ext = Path(file.filename).suffix.lower()
+    
+    if file_ext not in supported_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file format. Supported formats: {', '.join(supported_extensions)}"
+        )
     
     try:
         # Create data/markdown directory if it doesn't exist
@@ -425,7 +432,7 @@ async def convert_pdf_to_markdown(file: UploadFile = File(...)):
                 
                 return PDFToMarkdownResponse(
                     success=True,
-                    message=f"PDF successfully converted to Markdown",
+                    message=f"Document successfully converted to Markdown",
                     markdown_filename=markdown_filename,
                     metadata=metadata
                 )
@@ -438,7 +445,7 @@ async def convert_pdf_to_markdown(file: UploadFile = File(...)):
                     pass
                     
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"PDF conversion failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Document conversion failed: {str(e)}")
 
 
 @app.get("/documents/list-markdown", response_model=MarkdownListResponse)

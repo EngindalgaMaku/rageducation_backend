@@ -1,6 +1,6 @@
 # PDF processing - Enhanced with Marker for better quality
 PyPDF2
-marker-pdf>=0.2.15
+marker-pdf[full]>=0.2.15
 
 # DOCX processing
 python-docx

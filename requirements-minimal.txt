@@ -16,7 +16,7 @@ numpy
 
 # PDF processing - Essential for document processing
 PyPDF2
-marker-pdf>=0.2.15
+marker-pdf[full]>=0.2.15
 
 # Embeddings - Required for cloud LLM fallback embeddings
 sentence-transformers>=2.2.2
