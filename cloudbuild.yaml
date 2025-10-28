@@ -64,7 +64,6 @@ steps:
         "0",
         "--concurrency",
         "5",
-        "--cpu-throttling=false",
         "--set-env-vars",
         "ENVIRONMENT=production,MARKER_MAX_MEMORY_MB=15000,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GCS_BUCKET_NAME=${_SERVICE}-data-$BUILD_ID",
         "--port",
