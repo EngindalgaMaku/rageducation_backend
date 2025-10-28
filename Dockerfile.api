@@ -31,12 +31,61 @@ COPY requirements.txt ./
 RUN pip install --upgrade pip \
     && pip install -r requirements.txt
 
+# Pre-cache Marker models during build - CRITICAL FOR PERFORMANCE
+FROM dependencies AS model_cache
+
+# Create model cache directory with proper permissions
+RUN mkdir -p /app/models/marker_models && \
+    chmod -R 755 /app/models
+
+# Set environment variables for model caching during build
+ENV MARKER_CACHE_DIR=/app/models \
+    TORCH_HOME=/app/models/marker_models/torch \
+    HUGGINGFACE_HUB_CACHE=/app/models/marker_models/huggingface \
+    TRANSFORMERS_CACHE=/app/models/marker_models/transformers \
+    HF_HOME=/app/models/marker_models/hf_home \
+    MARKER_DISABLE_GEMINI=true \
+    MARKER_USE_LOCAL_ONLY=true \
+    MARKER_DISABLE_CLOUD_SERVICES=true \
+    MARKER_DISABLE_ALL_LLM=true \
+    MARKER_OCR_ONLY=true \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Copy minimal source needed for model caching
+COPY src/utils/model_cache_manager.py ./src/utils/
+COPY src/__init__.py ./src/
+COPY src/utils/__init__.py ./src/utils/
+
+# Pre-download and cache Marker models (this will be cached in Docker layer)
+RUN python -c "\
+import sys; \
+sys.path.append('/app'); \
+from src.utils.model_cache_manager import get_cached_marker_models; \
+print('🚀 Pre-downloading Marker models during Docker build...'); \
+models = get_cached_marker_models(force_download=True); \
+if models: print(f'✅ Successfully cached {len(models)} model components!'); \
+else: print('❌ Model caching failed, will download at runtime'); \
+" || echo "⚠️ Model pre-caching failed, continuing build..."
+
+# Verify cache was created
+RUN ls -la /app/models/ && \
+    du -sh /app/models/ && \
+    echo "✅ Model cache verification complete"
+
 # Runtime stage - Only rebuilds when source changes
-FROM dependencies AS runtime
+FROM model_cache AS runtime
 
 # Copy application source (this changes frequently)
 COPY src ./src
 RUN mkdir -p /app/data
+
+# Set runtime environment variables for model cache
+ENV MARKER_CACHE_DIR=/app/models \
+    MARKER_MAX_MEMORY_MB=3500 \
+    MARKER_TIMEOUT_SECONDS=900 \
+    MARKER_MAX_PAGES=200 \
+    MARKER_ENABLE_RESOURCE_MONITORING=false
 
 EXPOSE 8000
 

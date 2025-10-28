@@ -36,6 +36,13 @@ MARKER_USE_LOCAL_ONLY = os.getenv("MARKER_USE_LOCAL_ONLY", "true")
 MARKER_LLM_PROVIDER = os.getenv("MARKER_LLM_PROVIDER", "ollama")
 MARKER_DISABLE_CLOUD_SERVICES = os.getenv("MARKER_DISABLE_CLOUD_SERVICES", "true")
 
+# Model Cache Configuration - CRITICAL FOR PERFORMANCE
+MARKER_CACHE_DIR = os.getenv("MARKER_CACHE_DIR", "/app/models")
+MARKER_MAX_MEMORY_MB = int(os.getenv("MARKER_MAX_MEMORY_MB", "3500"))
+MARKER_TIMEOUT_SECONDS = int(os.getenv("MARKER_TIMEOUT_SECONDS", "900"))
+MARKER_MAX_PAGES = int(os.getenv("MARKER_MAX_PAGES", "200"))
+MARKER_ENABLE_RESOURCE_MONITORING = os.getenv("MARKER_ENABLE_RESOURCE_MONITORING", "false").lower() == "true"
+
 # Explicitly disable Google services
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
@@ -272,6 +279,12 @@ def get_config():
         "marker_disable_cloud_services": MARKER_DISABLE_CLOUD_SERVICES,
         "gemini_api_key": GEMINI_API_KEY,
         "google_api_key": GOOGLE_API_KEY,
+        # Model Cache Configuration
+        "marker_cache_dir": MARKER_CACHE_DIR,
+        "marker_max_memory_mb": MARKER_MAX_MEMORY_MB,
+        "marker_timeout_seconds": MARKER_TIMEOUT_SECONDS,
+        "marker_max_pages": MARKER_MAX_PAGES,
+        "marker_enable_resource_monitoring": MARKER_ENABLE_RESOURCE_MONITORING,
         # Embedding Configuration
         "embedding_provider": EMBEDDING_PROVIDER,
         "default_sentence_transformer_model": DEFAULT_SENTENCE_TRANSFORMER_MODEL,

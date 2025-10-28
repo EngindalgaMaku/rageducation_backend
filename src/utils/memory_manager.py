@@ -1,123 +1,275 @@
 """
-Memory management utilities for improved performance and stability.
+Memory Management Utilities for PDF Processing
+Prevents memory crashes and manages resource cleanup
 """
 
+import os
 import gc
+import logging
+import threading
+import time
 import psutil
-import weakref
-from typing import Any, Optional
-from ..utils.logger import get_logger
+from typing import Optional, Dict, Any, Callable
+from contextlib import contextmanager
+from functools import wraps
+
+logger = logging.getLogger(__name__)
 
 class MemoryManager:
     """
-    Memory management utility class.
+    Advanced memory management for PDF processing operations.
+    Monitors memory usage and enforces limits to prevent container crashes.
     """
     
-    def __init__(self, config: dict):
-        self.config = config
-        self.logger = get_logger(__name__, config)
-        self._object_cache = weakref.WeakValueDictionary()
+    def __init__(self):
+        self.max_memory_mb = int(os.getenv("MARKER_MAX_MEMORY_MB", "3500"))  # Leave headroom for 4GB limit
+        self.warning_threshold = 0.85  # Warn at 85% of limit
+        self.critical_threshold = 0.95  # Force cleanup at 95% of limit
+        self.monitoring_active = False
+        self.monitoring_thread = None
+        self.stop_monitoring = threading.Event()
+        self.memory_callbacks = []  # Functions to call when memory gets high
         
-    def get_memory_usage(self) -> dict:
-        """Get current memory usage statistics."""
-        process = psutil.Process()
-        memory_info = process.memory_info()
-        
-        return {
-            "rss_mb": memory_info.rss / 1024 / 1024,  # Resident Set Size
-            "vms_mb": memory_info.vms / 1024 / 1024,  # Virtual Memory Size
-            "percent": process.memory_percent(),
-            "available_mb": psutil.virtual_memory().available / 1024 / 1024,
-            "total_mb": psutil.virtual_memory().total / 1024 / 1024
-        }
-    
-    def should_gc(self) -> bool:
-        """Check if garbage collection should be triggered."""
-        memory_usage = self.get_memory_usage()
-        
-        # Trigger GC if memory usage is high
-        if memory_usage["percent"] > 80:
-            return True
+    def get_memory_usage(self) -> Dict[str, float]:
+        """Get detailed memory usage information"""
+        try:
+            process = psutil.Process()
+            memory_info = process.memory_info()
             
-        # Trigger GC if available memory is low
-        if memory_usage["available_mb"] < 1024:  # Less than 1GB available
-            return True
-            
-        return False
+            return {
+                "rss_mb": memory_info.rss / 1024 / 1024,  # Resident Set Size (physical memory)
+                "vms_mb": memory_info.vms / 1024 / 1024,  # Virtual Memory Size
+                "percent": process.memory_percent(),
+                "available_mb": psutil.virtual_memory().available / 1024 / 1024,
+                "system_total_mb": psutil.virtual_memory().total / 1024 / 1024,
+                "system_used_percent": psutil.virtual_memory().percent
+            }
+        except Exception as e:
+            logger.warning(f"Could not get memory info: {e}")
+            return {"rss_mb": 0, "vms_mb": 0, "percent": 0, "available_mb": 0, "system_total_mb": 0, "system_used_percent": 0}
     
-    def force_gc(self) -> dict:
-        """Force garbage collection and return statistics."""
-        self.logger.info("Forcing garbage collection...")
+    def is_memory_critical(self) -> bool:
+        """Check if memory usage is at critical levels"""
+        memory_info = self.get_memory_usage()
+        current_mb = memory_info["rss_mb"]
         
-        memory_before = self.get_memory_usage()
+        # Check both absolute limit and system memory pressure
+        absolute_critical = current_mb > (self.max_memory_mb * self.critical_threshold)
+        system_critical = memory_info["system_used_percent"] > 90
         
-        # Run garbage collection
-        collected = gc.collect()
+        return absolute_critical or system_critical
+    
+    def is_memory_warning(self) -> bool:
+        """Check if memory usage is at warning levels"""
+        memory_info = self.get_memory_usage()
+        current_mb = memory_info["rss_mb"]
+        
+        # Check both absolute limit and system memory pressure
+        absolute_warning = current_mb > (self.max_memory_mb * self.warning_threshold)
+        system_warning = memory_info["system_used_percent"] > 80
+        
+        return absolute_warning or system_warning
+    
+    def force_cleanup(self):
+        """Force aggressive memory cleanup"""
+        logger.warning("🧹 Forcing aggressive memory cleanup...")
+        
+        # Call registered cleanup callbacks
+        for callback in self.memory_callbacks:
+            try:
+                callback()
+            except Exception as e:
+                logger.warning(f"Memory cleanup callback failed: {e}")
+        
+        # Multiple garbage collection passes
+        for i in range(3):
+            collected = gc.collect()
+            logger.info(f"GC pass {i+1}: collected {collected} objects")
+        
+        # Clear various caches if available
+        try:
+            # Clear torch cache if available
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                logger.info("🔥 Cleared CUDA cache")
+        except ImportError:
+            pass
         
         memory_after = self.get_memory_usage()
+        logger.info(f"🧹 Cleanup complete. Memory usage: {memory_after['rss_mb']:.1f}MB")
+    
+    def add_cleanup_callback(self, callback: Callable):
+        """Add a function to call during memory cleanup"""
+        self.memory_callbacks.append(callback)
+    
+    def start_monitoring(self, check_interval: float = 5.0):
+        """Start background memory monitoring"""
+        if self.monitoring_active:
+            return
+            
+        self.monitoring_active = True
+        self.stop_monitoring.clear()
         
-        freed_mb = memory_before["rss_mb"] - memory_after["rss_mb"]
+        def monitor():
+            while not self.stop_monitoring.is_set():
+                try:
+                    memory_info = self.get_memory_usage()
+                    current_mb = memory_info["rss_mb"]
+                    
+                    if self.is_memory_critical():
+                        logger.error(f"🚨 CRITICAL MEMORY USAGE: {current_mb:.1f}MB / {self.max_memory_mb}MB")
+                        logger.error(f"🚨 System memory: {memory_info['system_used_percent']:.1f}%")
+                        self.force_cleanup()
+                        
+                        # Check again after cleanup
+                        if self.is_memory_critical():
+                            logger.error("🚨 Memory still critical after cleanup! Process may crash!")
+                            
+                    elif self.is_memory_warning():
+                        logger.warning(f"⚠️ HIGH MEMORY USAGE: {current_mb:.1f}MB / {self.max_memory_mb}MB")
+                        logger.warning(f"⚠️ System memory: {memory_info['system_used_percent']:.1f}%")
+                        
+                        # Light cleanup
+                        gc.collect()
+                    
+                    self.stop_monitoring.wait(check_interval)
+                        
+                except Exception as e:
+                    logger.error(f"Memory monitoring error: {e}")
+                    self.stop_monitoring.wait(check_interval)
         
-        stats = {
-            "objects_collected": collected,
-            "memory_freed_mb": freed_mb,
-            "memory_before": memory_before,
-            "memory_after": memory_after
-        }
+        self.monitoring_thread = threading.Thread(target=monitor, daemon=True)
+        self.monitoring_thread.start()
+        logger.info(f"📊 Memory monitoring started (limit: {self.max_memory_mb}MB)")
+    
+    def stop_memory_monitoring(self):
+        """Stop background memory monitoring"""
+        if self.monitoring_active:
+            self.stop_monitoring.set()
+            self.monitoring_active = False
+            if self.monitoring_thread:
+                self.monitoring_thread.join(timeout=2.0)
+            logger.info("📊 Memory monitoring stopped")
+    
+    @contextmanager
+    def memory_limit_context(self, operation_name: str = "operation"):
+        """Context manager that monitors memory during operation"""
+        memory_before = self.get_memory_usage()
+        logger.info(f"🔄 Starting {operation_name} - Memory: {memory_before['rss_mb']:.1f}MB")
         
-        self.logger.info(f"GC completed: collected {collected} objects, freed {freed_mb:.2f}MB")
+        # Start monitoring if not already active
+        was_monitoring = self.monitoring_active
+        if not was_monitoring:
+            self.start_monitoring()
         
-        return stats
-    
-    def auto_gc_check(self) -> Optional[dict]:
-        """Automatically check and perform GC if needed."""
-        if self.should_gc():
-            return self.force_gc()
-        return None
-    
-    def cache_object(self, key: str, obj: Any) -> None:
-        """Cache an object using weak references."""
-        self._object_cache[key] = obj
-    
-    def get_cached_object(self, key: str) -> Optional[Any]:
-        """Get a cached object."""
-        return self._object_cache.get(key)
-    
-    def clear_cache(self) -> int:
-        """Clear the object cache."""
-        count = len(self._object_cache)
-        self._object_cache.clear()
-        self.logger.info(f"Cleared {count} cached objects")
-        return count
-    
-    def get_cache_stats(self) -> dict:
-        """Get cache statistics."""
-        return {
-            "cached_objects": len(self._object_cache),
-            "cache_keys": list(self._object_cache.keys())
-        }
+        try:
+            yield self
+            
+        except MemoryError:
+            logger.error(f"❌ {operation_name} failed due to memory error!")
+            self.force_cleanup()
+            raise
+            
+        except Exception as e:
+            logger.error(f"❌ {operation_name} failed: {e}")
+            self.force_cleanup()
+            raise
+            
+        finally:
+            # Stop monitoring if we started it
+            if not was_monitoring:
+                self.stop_memory_monitoring()
+            
+            # Final cleanup
+            gc.collect()
+            
+            memory_after = self.get_memory_usage()
+            memory_used = memory_after['rss_mb'] - memory_before['rss_mb']
+            logger.info(f"✅ {operation_name} complete - Memory: {memory_after['rss_mb']:.1f}MB (+{memory_used:+.1f}MB)")
+
+# Decorators for automatic memory management
+def memory_managed(operation_name: str = None):
+    """Decorator that adds memory management to a function"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            op_name = operation_name or f"{func.__name__}"
+            memory_manager = get_memory_manager()
+            
+            with memory_manager.memory_limit_context(op_name):
+                return func(*args, **kwargs)
+        return wrapper
+    return decorator
+
+def cleanup_on_exit(func):
+    """Decorator that ensures cleanup happens when function exits"""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        finally:
+            gc.collect()
+    return wrapper
 
 # Global memory manager instance
-_memory_manager: Optional[MemoryManager] = None
+_memory_manager = None
 
-def get_memory_manager(config: dict) -> MemoryManager:
-    """Get the global memory manager instance."""
+def get_memory_manager() -> MemoryManager:
+    """Get the global memory manager instance"""
     global _memory_manager
     if _memory_manager is None:
-        _memory_manager = MemoryManager(config)
+        _memory_manager = MemoryManager()
     return _memory_manager
 
-def cleanup_memory(config: dict) -> dict:
-    """Utility function for memory cleanup."""
-    manager = get_memory_manager(config)
+def check_memory_available(required_mb: float = 1000) -> bool:
+    """Check if enough memory is available for an operation"""
+    memory_manager = get_memory_manager()
+    memory_info = memory_manager.get_memory_usage()
     
-    # Clear caches
-    cache_cleared = manager.clear_cache()
+    current_usage = memory_info["rss_mb"]
+    available = memory_manager.max_memory_mb - current_usage
     
-    # Force garbage collection
-    gc_stats = manager.force_gc()
+    if available < required_mb:
+        logger.warning(f"⚠️ Insufficient memory: {available:.1f}MB available, {required_mb:.1f}MB required")
+        return False
     
-    return {
-        "cache_cleared": cache_cleared,
-        "gc_stats": gc_stats
-    }
+    return True
+
+def optimize_for_large_processing():
+    """Optimize memory settings for large file processing"""
+    memory_manager = get_memory_manager()
+    
+    # Force cleanup before starting
+    memory_manager.force_cleanup()
+    
+    # Start monitoring
+    memory_manager.start_monitoring(check_interval=3.0)  # More frequent checks
+    
+    logger.info("🔧 Memory optimized for large file processing")
+    
+    return memory_manager
+
+if __name__ == "__main__":
+    # Test memory manager
+    memory_manager = get_memory_manager()
+    
+    print("📋 Memory Manager Test")
+    memory_info = memory_manager.get_memory_usage()
+    print(f"Current memory usage: {memory_info}")
+    
+    # Test memory monitoring
+    memory_manager.start_monitoring()
+    print("Memory monitoring started...")
+    
+    time.sleep(2)
+    
+    memory_manager.stop_memory_monitoring()
+    print("Memory monitoring stopped")
+    
+    # Test context manager
+    with memory_manager.memory_limit_context("test operation"):
+        print("Inside memory managed context")
+        time.sleep(1)
+    
+    print("Test complete")

@@ -17,6 +17,9 @@ import time
 import psutil
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
+# Setup logger first before any other imports that might use it
+logger = logging.getLogger(__name__)
+
 # Marker availability'yi dynamic olarak kontrol et
 def check_marker_availability():
     """Marker kütüphanesinin mevcut olup olmadığını kontrol et"""
@@ -29,6 +32,24 @@ def check_marker_availability():
         return True
     except ImportError:
         return False
+
+# Model cache manager import
+try:
+    from src.utils.model_cache_manager import get_cached_marker_models, get_model_cache_manager
+    MODEL_CACHE_AVAILABLE = True
+    logger.info("✅ Model cache manager loaded successfully")
+except ImportError as e:
+    MODEL_CACHE_AVAILABLE = False
+    logger.warning(f"⚠️ Model cache manager not available: {e}")
+
+# Memory manager import
+try:
+    from src.utils.memory_manager import get_memory_manager, memory_managed, optimize_for_large_processing
+    MEMORY_MANAGER_AVAILABLE = True
+    logger.info("✅ Memory manager loaded successfully")
+except ImportError as e:
+    MEMORY_MANAGER_AVAILABLE = False
+    logger.warning(f"⚠️ Memory manager not available: {e}")
 
 # İlk kontrol
 MARKER_AVAILABLE = check_marker_availability()
@@ -54,9 +75,6 @@ else:
 
 # Fallback için mevcut PDF processor
 from src.document_processing.pdf_processor import process_pdf as fallback_pdf_extract
-
-
-logger = logging.getLogger(__name__)
 
 
 class MarkerPDFProcessor:
@@ -209,13 +227,14 @@ class MarkerPDFProcessor:
             self.converter = None
     
     def _load_converter_if_needed(self):
-        """Gerektiğinde converter'ı yükle (Optimized settings ile)"""
+        """Gerektiğinde converter'ı yükle (Cached models ile)"""
         if not MARKER_AVAILABLE or self.models_loaded:
             return
         
         try:
             if self.converter is None:
-                logger.info("🔄 Marker converter ve modelleri yükleniyor (optimize edilmiş ayarlarla)...")
+                logger.info("🔄 Marker converter ve modelleri yükleniyor (cached models ile)...")
+                memory_before = self._get_memory_usage()
                 
                 # Environment variables - CRASH-SAFE MODE
                 os.environ["MARKER_DISABLE_GEMINI"] = "true"
@@ -243,8 +262,17 @@ class MarkerPDFProcessor:
                     os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # İlk GPU'yu kullan
                     logger.info("🚀 GPU desteği aktif - CUDA optimize edildi")
                 
-                # Artifact dictionary oluştur
-                artifact_dict = create_model_dict()
+                # Use cached models if available
+                if MODEL_CACHE_AVAILABLE:
+                    logger.info("🎯 Using cached Marker models to avoid downloads...")
+                    artifact_dict = get_cached_marker_models()
+                    
+                    if artifact_dict is None:
+                        logger.warning("⚠️ Failed to load cached models, falling back to direct download")
+                        artifact_dict = create_model_dict()
+                else:
+                    logger.warning("⚠️ Model cache manager not available, downloading models directly")
+                    artifact_dict = create_model_dict()
                 
                 # Optimize artifact dict - disable heavy models if available
                 if artifact_dict and 'layout' in artifact_dict:
@@ -253,7 +281,10 @@ class MarkerPDFProcessor:
                 
                 # Sadece temel Marker converter'ı kullan - performans odaklı
                 self.converter = PdfConverter(artifact_dict=artifact_dict)
-                logger.info("✅ Marker converter (optimize edilmiş) başarıyla yüklendi")
+                
+                memory_after = self._get_memory_usage()
+                memory_used = memory_after - memory_before
+                logger.info(f"✅ Marker converter (cached) başarıyla yüklendi - Memory used: {memory_used:.1f}MB")
                 
                 self.models_loaded = True
         except Exception as e:
@@ -262,9 +293,19 @@ class MarkerPDFProcessor:
             self.converter = None
             self.models_loaded = False
     
+    def _get_memory_usage(self) -> float:
+        """Get current memory usage in MB"""
+        try:
+            import psutil
+            process = psutil.Process()
+            return process.memory_info().rss / 1024 / 1024
+        except:
+            return 0.0
+    
+    @memory_managed("PDF Processing with Marker")
     def process_pdf_with_marker(self, pdf_path: str, output_dir: Optional[str] = None, timeout_seconds: int = None) -> Tuple[str, Dict[str, Any]]:
         """
-        PDF'i Marker ile işle - Resource protected and system-safe
+        PDF'i Marker ile işle - Memory managed and crash-safe
         
         Args:
             pdf_path: PDF dosya yolu
@@ -288,15 +329,42 @@ class MarkerPDFProcessor:
         timeout_seconds = timeout_seconds or self.resource_limits["timeout_seconds"]
         
         def protected_process():
-            """CRASH-SAFE PDF işleme - detaylı progress tracking ile"""
+            """MEMORY-SAFE PDF işleme - detaylı progress tracking ile"""
             
             try:
-                logger.info(f"🚀 PDF işleniyor - Büyük dosya desteği aktif (timeout: {timeout_seconds}s, memory limit: {self.resource_limits['max_memory_mb']}MB)")
+                # Initialize memory manager for large files
+                memory_manager = None
+                if MEMORY_MANAGER_AVAILABLE:
+                    memory_manager = optimize_for_large_processing()
+                    
+                    # Register cleanup callback for this processing session
+                    def cleanup_pdf_processing():
+                        try:
+                            # Clean up large variables
+                            if 'rendered' in locals():
+                                del rendered
+                            if 'markdown_text' in locals():
+                                del markdown_text
+                            if 'images' in locals():
+                                del images
+                        except:
+                            pass
+                    
+                    memory_manager.add_cleanup_callback(cleanup_pdf_processing)
+                
+                logger.info(f"🚀 PDF işleniyor - Memory managed processing (timeout: {timeout_seconds}s, memory limit: {self.resource_limits['max_memory_mb']}MB)")
                 logger.info(f"📄 Dosya: {pdf_path}")
                 
                 # File size kontrolü
                 file_size_mb = os.path.getsize(pdf_path) / (1024 * 1024)
                 logger.info(f"📊 Dosya boyutu: {file_size_mb:.1f}MB")
+                
+                # Memory check before processing
+                if MEMORY_MANAGER_AVAILABLE and file_size_mb > 50:  # Large file
+                    required_memory = file_size_mb * 8  # Estimate 8x file size needed for processing
+                    if not memory_manager.get_memory_usage()["available_mb"] > required_memory:
+                        logger.warning(f"⚠️ Large file detected ({file_size_mb:.1f}MB) - forcing pre-cleanup")
+                        memory_manager.force_cleanup()
                 
                 # Progress tracking setup
                 progress_stages = {
@@ -332,14 +400,25 @@ class MarkerPDFProcessor:
                 stage_start_time = time.time()
                 logger.info(f"🔄 [2/6] Sayfa analizi... ({current_progress}%)")
                 
-                # Memory optimization
+                # Memory optimization and monitoring
                 import gc
                 gc.collect()
                 
-                import psutil
-                process = psutil.Process()
-                initial_memory = process.memory_info().rss / 1024 / 1024
-                logger.info(f"🔧 Başlangıç bellek kullanımı: {initial_memory:.1f}MB")
+                initial_memory = 0
+                if MEMORY_MANAGER_AVAILABLE:
+                    memory_info = memory_manager.get_memory_usage()
+                    initial_memory = memory_info["rss_mb"]
+                    logger.info(f"🔧 Başlangıç bellek kullanımı: {initial_memory:.1f}MB")
+                    
+                    # Check if memory is getting high
+                    if memory_manager.is_memory_warning():
+                        logger.warning("⚠️ High memory usage detected before processing - forcing cleanup")
+                        memory_manager.force_cleanup()
+                else:
+                    import psutil
+                    process = psutil.Process()
+                    initial_memory = process.memory_info().rss / 1024 / 1024
+                    logger.info(f"🔧 Başlangıç bellek kullanımı: {initial_memory:.1f}MB")
                 
                 current_progress += progress_stages["page_analysis"]
                 elapsed = time.time() - stage_start_time
@@ -374,8 +453,20 @@ class MarkerPDFProcessor:
                 stage_start_time = time.time()
                 logger.info(f"🔄 [4/6] OCR işleme... ({current_progress}%)")
                 
-                processing_memory = process.memory_info().rss / 1024 / 1024
-                logger.info(f"🔧 İşlem sonrası bellek: {processing_memory:.1f}MB (+{processing_memory-initial_memory:.1f}MB)")
+                # Memory monitoring during processing
+                if MEMORY_MANAGER_AVAILABLE:
+                    processing_memory = memory_manager.get_memory_usage()["rss_mb"]
+                    logger.info(f"🔧 İşlem sonrası bellek: {processing_memory:.1f}MB (+{processing_memory-initial_memory:.1f}MB)")
+                    
+                    # Critical memory check
+                    if memory_manager.is_memory_critical():
+                        logger.error("🚨 CRITICAL MEMORY during processing - forcing emergency cleanup!")
+                        memory_manager.force_cleanup()
+                else:
+                    import psutil
+                    process = psutil.Process()
+                    processing_memory = process.memory_info().rss / 1024 / 1024
+                    logger.info(f"🔧 İşlem sonrası bellek: {processing_memory:.1f}MB (+{processing_memory-initial_memory:.1f}MB)")
                 
                 current_progress += progress_stages["ocr_processing"]
                 elapsed = time.time() - stage_start_time
@@ -396,8 +487,18 @@ class MarkerPDFProcessor:
                 logger.info(f"🔄 [6/6] Temizlik yapılıyor... ({current_progress}%)")
                 
                 gc.collect()
-                final_memory = process.memory_info().rss / 1024 / 1024
-                logger.info(f"🔧 Final bellek kullanımı: {final_memory:.1f}MB")
+                
+                if MEMORY_MANAGER_AVAILABLE:
+                    final_memory = memory_manager.get_memory_usage()["rss_mb"]
+                    logger.info(f"🔧 Final bellek kullanımı: {final_memory:.1f}MB")
+                    
+                    # Stop monitoring for this processing session
+                    memory_manager.stop_memory_monitoring()
+                else:
+                    import psutil
+                    process = psutil.Process()
+                    final_memory = process.memory_info().rss / 1024 / 1024
+                    logger.info(f"🔧 Final bellek kullanımı: {final_memory:.1f}MB")
                 
                 current_progress += progress_stages["cleanup"]
                 elapsed = time.time() - stage_start_time
@@ -406,11 +507,14 @@ class MarkerPDFProcessor:
                 return markdown_text, metadata_dict, images, rendered
                 
             finally:
-                # CRASH-SAFE cleanup - resource monitoring devre dışı
-                # self._stop_resource_monitor()  # Devre dışı
-                
-                # Basit memory temizliği
+                # MEMORY-SAFE cleanup
                 try:
+                    # Memory manager cleanup
+                    if MEMORY_MANAGER_AVAILABLE and memory_manager:
+                        memory_manager.stop_memory_monitoring()
+                        memory_manager.force_cleanup()
+                    
+                    # Manual cleanup
                     import gc
                     gc.collect()
                     
@@ -421,8 +525,12 @@ class MarkerPDFProcessor:
                         del markdown_text
                     if 'images' in locals():
                         del images
-                except:
-                    pass
+                        
+                    # Final garbage collection
+                    gc.collect()
+                    
+                except Exception as cleanup_error:
+                    logger.warning(f"⚠️ Cleanup error: {cleanup_error}")
         
         try:
             # Protected processing with extended timeout
@@ -705,9 +813,17 @@ class MarkerPDFProcessor:
         method = "fallback"
         if MARKER_AVAILABLE and self.models_loaded:
             if self.use_llm:
-                method = "marker_new_api_ollama_llm"
+                method = "marker_new_api_ollama_llm_cached"
             else:
-                method = "marker_new_api"
+                method = "marker_new_api_cached"
+        
+        cache_stats = {}
+        if MODEL_CACHE_AVAILABLE:
+            try:
+                cache_manager = get_model_cache_manager()
+                cache_stats = cache_manager.get_cache_stats()
+            except:
+                cache_stats = {"error": "Could not get cache stats"}
         
         return {
             "marker_available": MARKER_AVAILABLE,
@@ -715,7 +831,9 @@ class MarkerPDFProcessor:
             "llm_enabled": self.use_llm,
             "ollama_config": self.ollama_config if self.use_llm else None,
             "processing_method": method,
-            "api_version": "new_with_llm" if MARKER_AVAILABLE and self.use_llm else "new" if MARKER_AVAILABLE else "none"
+            "api_version": "new_with_llm_cached" if MARKER_AVAILABLE and self.use_llm else "new_cached" if MARKER_AVAILABLE else "none",
+            "model_cache_available": MODEL_CACHE_AVAILABLE,
+            "cache_stats": cache_stats
         }
 
 
