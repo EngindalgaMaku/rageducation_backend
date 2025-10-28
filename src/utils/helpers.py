@@ -7,7 +7,7 @@ file operations, and other common utilities.
 
 import logging
 import os
-from .. import config
+from ..config import config
 
 def setup_logging():
     """
@@ -17,7 +17,7 @@ def setup_logging():
     settings from the config module.
     """
     log_level = getattr(logging, config.LOG_LEVEL.upper(), logging.INFO)
-    log_file = config.LOG_FILE
+    log_file = getattr(config, 'LOG_FILE', 'data/logs/rag_system.log')
 
     # Create logs directory if it doesn't exist
     os.makedirs(os.path.dirname(log_file), exist_ok=True)

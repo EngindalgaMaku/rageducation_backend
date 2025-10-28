@@ -15,6 +15,7 @@ from src.vector_store.faiss_store import FaissVectorStore
 from src.embedding.embedding_generator import generate_embeddings
 from src.utils.logger import get_logger
 from src.utils.cache import get_cache
+from src.config import is_cloud_environment
 from src.utils.memory_manager import get_memory_manager
 from src.rag.re_ranker import ReRanker
 
@@ -53,12 +54,16 @@ class RAGPipeline:
                 self.reranker = None
         
     def _init_ollama_client(self):
-        """Initialize Ollama client with retry logic."""
+        """Initialize Ollama client with retry logic, skipping in cloud environments."""
+        if is_cloud_environment():
+            self.logger.info("Cloud environment detected, skipping Ollama client initialization.")
+            return None
+    
         # Check if ollama module is available
         if not OLLAMA_AVAILABLE:
             self.logger.warning("Ollama module not available - running in test/development mode")
             return None
-            
+                
         max_retries = 3
         retry_delay = 2
         
@@ -75,7 +80,7 @@ class RAGPipeline:
                     time.sleep(retry_delay)
                     retry_delay *= 2  # Exponential backoff
                 else:
-                    self.logger.error("Failed to connect to Ollama after all retries")
+                    self.logger.warning("Could not connect to Ollama. Running without local models.")
                     return None
 
     def retrieve(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:

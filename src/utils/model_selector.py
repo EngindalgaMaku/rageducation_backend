@@ -6,7 +6,7 @@ Provides functionality to switch between different Ollama models dynamically.
 import ollama
 import streamlit as st
 from typing import Dict, List, Any, Optional
-from ..config import get_available_models, set_generation_model
+from ..config import get_available_models, set_generation_model, is_cloud_environment
 from ..utils.logger import get_logger
 
 class ModelSelector:
@@ -21,12 +21,17 @@ class ModelSelector:
         self._init_ollama_client()
     
     def _init_ollama_client(self):
-        """Initialize Ollama client."""
+        """Initialize Ollama client, skipping in cloud environments."""
+        if is_cloud_environment():
+            self.logger.info("Cloud environment detected, skipping Ollama client initialization.")
+            self.ollama_client = None
+            return
+    
         try:
             self.ollama_client = ollama.Client(host=self.config.get("ollama_base_url"))
             self.ollama_client.list()
         except Exception as e:
-            self.logger.error(f"Failed to connect to Ollama: {e}")
+            self.logger.warning(f"Could not connect to Ollama. Running without local models. Error: {e}")
             self.ollama_client = None
     
     def get_installed_models(self) -> List[str]:

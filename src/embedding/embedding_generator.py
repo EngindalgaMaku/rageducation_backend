@@ -12,6 +12,7 @@ import time
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from .. import config
+from ..config import is_cloud_environment
 from ..utils.helpers import setup_logging
 from ..utils.cache import get_cache
 
@@ -43,10 +44,14 @@ def get_selected_provider() -> str:
     return os.environ.get("RAG_PROVIDER", "groq")
 
 def init_ollama_client():
-    """Initialize Ollama client on demand."""
+    """Initialize Ollama client on demand, skipping in cloud environments."""
     global ollama_client
     if ollama_client is not None:
         return ollama_client
+
+    if is_cloud_environment():
+        logger.info("Cloud environment detected, skipping Ollama client initialization.")
+        return None
         
     if not OLLAMA_AVAILABLE:
         logger.warning("Ollama module not available")
@@ -59,7 +64,7 @@ def init_ollama_client():
         logger.info(f"Successfully connected to Ollama at {config.OLLAMA_BASE_URL}")
         return ollama_client
     except Exception as e:
-        logger.error(f"Failed to connect to Ollama at {config.OLLAMA_BASE_URL}. Please ensure Ollama is running. Error: {e}")
+        logger.warning(f"Could not connect to Ollama. Running without local models. Error: {e}")
         ollama_client = None
         return None
 

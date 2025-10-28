@@ -1101,4 +1101,11 @@ def test_endpoint():
     return {"status": "success", "message": "API is working"}
 
 
+if __name__ == "__main__":
+    import uvicorn
+    # Cloud Run requires listening on 0.0.0.0 with PORT environment variable
+    port = int(os.environ.get("PORT", 8080))
+    print(f"🚀 Starting RAG3 API server on 0.0.0.0:{port}")
+    uvicorn.run(app, host="0.0.0.0", port=port)
+
 # Run with: uvicorn src.api.main:app --reload

@@ -16,6 +16,9 @@ class RAGConfig:
         self.is_cloud = self.environment == 'production'
         self.logger = logging.getLogger(__name__)
         
+        # Logging Configuration
+        self.LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
+        
         # Database Configuration
         self._setup_database_config()
         
@@ -134,6 +137,10 @@ class RAGConfig:
 
 # Global configuration instance
 config = RAGConfig()
+
+def get_config():
+    """Get the global configuration instance"""
+    return config
 
 # Helper functions for backward compatibility
 def get_database_config() -> Dict[str, Any]:

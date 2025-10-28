@@ -17,6 +17,7 @@ import time
 import ollama
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from src.utils.logger import get_logger
+from src.config import is_cloud_environment
 from src.vector_store.faiss_store import FaissVectorStore
 from src.embedding.embedding_generator import generate_embeddings
 from src.utils.prompt_templates import BilingualPromptManager
@@ -69,12 +70,17 @@ class BaseRAGChain(ABC):
         }
     
     def _init_ollama_client(self):
-        """Initialize Ollama client with retry logic."""
+        """Initialize Ollama client, skipping in cloud environments."""
+        if is_cloud_environment():
+            self.logger.info("Cloud environment detected, skipping Ollama client initialization.")
+            self.ollama_client = None
+            return None
+    
         try:
             client = ollama.Client(host=self.config.get("ollama_base_url"))
             return client
         except Exception as e:
-            self.logger.error(f"Failed to initialize Ollama client: {e}")
+            self.logger.warning(f"Could not connect to Ollama. Running without local models. Error: {e}")
             return None
     
     @abstractmethod
