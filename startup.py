@@ -49,7 +49,19 @@ def start_minimal_api():
     """Start minimal API version"""
     print("🚀 Starting MINIMAL API version...")
     try:
-        os.system("python src/api/main_minimal.py")
+        import uvicorn
+        from src.api.main_minimal import app
+        
+        # Cloud Run requires listening on 0.0.0.0 with PORT environment variable
+        port = int(os.environ.get("PORT", 8080))
+        print(f"📍 Starting on 0.0.0.0:{port}")
+        
+        uvicorn.run(
+            app,
+            host="0.0.0.0",
+            port=port,
+            log_level="info"
+        )
     except KeyboardInterrupt:
         print("⏹️ Minimal API stopped")
     except Exception as e:
@@ -60,7 +72,19 @@ def start_full_api():
     """Start full API version"""
     print("🚀 Starting FULL API version...")
     try:
-        os.system("python src/api/main.py")
+        import uvicorn
+        from src.api.main import app
+        
+        # Cloud Run requires listening on 0.0.0.0 with PORT environment variable
+        port = int(os.environ.get("PORT", 8080))
+        print(f"📍 Starting on 0.0.0.0:{port}")
+        
+        uvicorn.run(
+            app,
+            host="0.0.0.0",
+            port=port,
+            log_level="info"
+        )
     except KeyboardInterrupt:
         print("⏹️ Full API stopped")
     except Exception as e:

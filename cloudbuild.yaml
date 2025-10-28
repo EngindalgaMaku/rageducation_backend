@@ -68,8 +68,11 @@ steps:
         "0",
         "--concurrency",
         "5",
+        "--no-cpu-throttling",
+        "--execution-environment",
+        "gen2",
         "--set-env-vars",
-        "ENVIRONMENT=production,MARKER_MAX_MEMORY_MB=15000,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GCS_BUCKET_NAME=${_SERVICE}-data-$BUILD_ID",
+        "ENVIRONMENT=production,MARKER_MAX_MEMORY_MB=15000,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GCS_BUCKET_NAME=${_SERVICE}-data-$BUILD_ID,FORCE_MINIMAL_API=true,PYTHONPATH=/app,GROQ_API_KEY=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",
         "--port",
         "8080",
       ]

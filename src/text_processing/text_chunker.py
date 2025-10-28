@@ -10,6 +10,13 @@ import re
 from .. import config
 from ..utils.helpers import setup_logging
 
+# Import semantic chunking functionality
+try:
+    from .semantic_chunker import create_semantic_chunks
+    SEMANTIC_CHUNKING_AVAILABLE = True
+except ImportError:
+    SEMANTIC_CHUNKING_AVAILABLE = False
+
 logger = setup_logging()
 
 def _group_units(units: Sequence[str], chunk_size: int, chunk_overlap: int) -> List[str]:
@@ -333,14 +340,83 @@ def _chunk_by_markdown_structure(text: str, chunk_size: int, chunk_overlap: int)
     return final_sections
 
 
+def _chunk_by_hybrid_strategy(text: str, chunk_size: int, chunk_overlap: int, language: str) -> List[str]:
+    """
+    Hybrid chunking strategy combining markdown structural analysis with LLM semantic analysis.
+    
+    This approach:
+    1. First applies markdown structural chunking to respect document structure
+    2. Then uses LLM semantic analysis to refine boundaries and improve coherence
+    3. Falls back to pure markdown chunking if semantic analysis fails
+    """
+    logger.info("Applying hybrid chunking strategy (markdown + semantic)")
+    
+    try:
+        # Step 1: Get initial structural chunks using markdown strategy
+        structural_chunks = _chunk_by_markdown_structure(text, chunk_size, chunk_overlap)
+        
+        if not SEMANTIC_CHUNKING_AVAILABLE:
+            logger.warning("Semantic analysis not available, using pure markdown strategy")
+            return structural_chunks
+        
+        # Step 2: Apply semantic refinement to structural chunks
+        refined_chunks = []
+        
+        for chunk in structural_chunks:
+            # Only apply semantic analysis to chunks that are significantly large
+            if len(chunk) > chunk_size * 0.6:  # Only refine larger chunks
+                try:
+                    # Use semantic chunking to potentially split large chunks better
+                    overlap_ratio = chunk_overlap / chunk_size if chunk_overlap > 0 else 0.1
+                    semantic_sub_chunks = create_semantic_chunks(
+                        text=chunk,
+                        target_size=chunk_size,
+                        overlap_ratio=overlap_ratio,
+                        language=language,
+                        fallback_strategy="markdown"
+                    )
+                    
+                    # If semantic analysis produces better chunking, use it
+                    if len(semantic_sub_chunks) > 1 and all(len(sc) >= 100 for sc in semantic_sub_chunks):
+                        refined_chunks.extend(semantic_sub_chunks)
+                        logger.debug(f"Refined chunk into {len(semantic_sub_chunks)} semantic sub-chunks")
+                    else:
+                        refined_chunks.append(chunk)
+                        
+                except Exception as e:
+                    logger.warning(f"Semantic refinement failed for chunk: {e}")
+                    refined_chunks.append(chunk)
+            else:
+                # Keep smaller chunks as-is
+                refined_chunks.append(chunk)
+        
+        # Step 3: Post-process to merge very small chunks
+        final_chunks = []
+        for chunk in refined_chunks:
+            if len(chunk) < 150 and final_chunks and len(final_chunks[-1]) < chunk_size * 0.8:
+                # Merge small chunk with previous one
+                final_chunks[-1] = final_chunks[-1] + '\n\n' + chunk
+            else:
+                final_chunks.append(chunk)
+        
+        logger.info(f"Hybrid strategy: {len(structural_chunks)} structural -> {len(refined_chunks)} refined -> {len(final_chunks)} final chunks")
+        return final_chunks
+        
+    except Exception as e:
+        logger.error(f"Hybrid chunking strategy failed: {e}")
+        logger.info("Falling back to pure markdown strategy")
+        return _chunk_by_markdown_structure(text, chunk_size, chunk_overlap)
+
+
 def chunk_text(
     text: str,
     chunk_size: int = None,
     chunk_overlap: int = None,
-    strategy: Literal["char", "paragraph", "sentence", "markdown"] = "char",
+    strategy: Literal["char", "paragraph", "sentence", "markdown", "semantic", "hybrid"] = "char",
+    language: str = "auto",
 ) -> List[str]:
     """
-    Splits a text into overlapping chunks.
+    Splits a text into overlapping chunks using various strategies.
 
     Args:
         text: The input text to be chunked.
@@ -348,6 +424,14 @@ def chunk_text(
                     If None, uses the value from the config file.
         chunk_overlap: The desired overlap between consecutive chunks (in characters).
                        If None, uses the value from the config file.
+        strategy: Chunking strategy to use:
+                  - "char": Character-based chunking
+                  - "paragraph": Paragraph-based chunking
+                  - "sentence": Sentence-based chunking
+                  - "markdown": Markdown structure-aware chunking
+                  - "semantic": LLM-based semantic chunking
+                  - "hybrid": Combination of markdown + semantic analysis
+        language: Language of the text for semantic analysis ("tr", "en", or "auto")
 
     Returns:
         A list of text chunks.
@@ -425,6 +509,28 @@ def chunk_text(
     elif strategy == "markdown":
         # Markdown yapısına dayalı akıllı chunking
         chunks = _chunk_by_markdown_structure(normalized, chunk_size, chunk_overlap)
+    elif strategy == "semantic":
+        # LLM tabanlı semantic chunking
+        if SEMANTIC_CHUNKING_AVAILABLE:
+            try:
+                overlap_ratio = chunk_overlap / chunk_size if chunk_overlap > 0 else 0.1
+                chunks = create_semantic_chunks(
+                    text=normalized,
+                    target_size=chunk_size,
+                    overlap_ratio=overlap_ratio,
+                    language=language,
+                    fallback_strategy="markdown"
+                )
+            except Exception as e:
+                logger.error(f"Semantic chunking failed: {e}")
+                logger.info("Falling back to markdown strategy")
+                chunks = _chunk_by_markdown_structure(normalized, chunk_size, chunk_overlap)
+        else:
+            logger.warning("Semantic chunking not available, falling back to markdown")
+            chunks = _chunk_by_markdown_structure(normalized, chunk_size, chunk_overlap)
+    elif strategy == "hybrid":
+        # Hibrit strateji: Markdown yapısal analiz + LLM semantic analiz
+        chunks = _chunk_by_hybrid_strategy(normalized, chunk_size, chunk_overlap, language)
     else:
         logger.warning(f"Unknown chunking strategy '{strategy}', falling back to 'char'.")
         chunks = []
