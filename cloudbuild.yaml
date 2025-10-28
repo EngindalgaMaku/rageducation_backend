@@ -5,6 +5,7 @@ substitutions:
   _SERVICE: "rageducation-backend"
   _REGION: "europe-west1"
   _BUCKET_NAME: "${_SERVICE}-data-${BUILD_ID}"
+  _GROQ_API_KEY: "" # Will be provided via build variables or environment
 
 steps:
   # Build container using backend Dockerfile with cache optimization
@@ -72,7 +73,7 @@ steps:
         "--execution-environment",
         "gen2",
         "--set-env-vars",
-        "ENVIRONMENT=production,MARKER_MAX_MEMORY_MB=15000,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GCS_BUCKET_NAME=${_SERVICE}-data-$BUILD_ID,FORCE_MINIMAL_API=true,PYTHONPATH=/app,GROQ_API_KEY=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",
+        "ENVIRONMENT=production,MARKER_MAX_MEMORY_MB=15000,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GCS_BUCKET_NAME=${_SERVICE}-data-$BUILD_ID,FORCE_MINIMAL_API=true,PYTHONPATH=/app,GROQ_API_KEY=${_GROQ_API_KEY}",
         "--port",
         "8080",
       ]

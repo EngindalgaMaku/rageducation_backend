@@ -85,7 +85,7 @@ gcloud run deploy rageducation-backend \
   --concurrency 5 \
   --no-cpu-throttling \
   --execution-environment gen2 \
-  --set-env-vars "ENVIRONMENT=production,FORCE_MINIMAL_API=true,PYTHONPATH=/app,GROQ_API_KEY=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" \
+  --set-env-vars "ENVIRONMENT=production,FORCE_MINIMAL_API=true,PYTHONPATH=/app,GROQ_API_KEY=YOUR_GROQ_API_KEY_HERE" \
   --port 8080
 ```
 
