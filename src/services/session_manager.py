@@ -26,6 +26,8 @@ from contextlib import contextmanager
 
 import logging
 # from src.utils.logger import get_logger
+from src.config import config
+from src.utils.cloud_storage_manager import cloud_storage_manager
 
 
 class SessionStatus(Enum):
@@ -114,38 +116,63 @@ class ProfessionalSessionManager:
     """Profesyonel oturum yönetim sistemi"""
     
     def __init__(self, db_path: str = "data/analytics/sessions.db"):
-        self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.logger = logging.getLogger(__name__)
         logging.basicConfig(level=logging.INFO)
         
-        # Backup ve export dizinleri
-        self.backup_dir = Path("data/backups/sessions")
-        self.backup_dir.mkdir(parents=True, exist_ok=True)
+        # Cloud-compatible setup
+        self.is_cloud = config.is_cloud_environment()
+        self.cloud_storage = cloud_storage_manager
         
-        self.export_dir = Path("data/exports/sessions")  
+        if self.is_cloud:
+            # Use cloud storage manager for database path
+            self.db_path = None  # Will be handled by cloud storage manager
+            self.db_name = "sessions.db"
+            
+            # Cloud storage paths
+            storage_config = config.get_storage_config()
+            self.backup_dir = Path("/tmp/rag3/backups")
+            self.export_dir = Path("/tmp/rag3/exports")
+        else:
+            # Local development setup
+            self.db_path = Path(db_path)
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            self.db_name = self.db_path.name
+            
+            # Local backup and export directories
+            self.backup_dir = Path("data/backups/sessions")
+            self.export_dir = Path("data/exports/sessions")
+        
+        # Ensure directories exist
+        self.backup_dir.mkdir(parents=True, exist_ok=True)
         self.export_dir.mkdir(parents=True, exist_ok=True)
         
         # Database initialization
         self._init_schema()
         
-        # Auto-cleanup old backups (30+ days)
-        self._cleanup_old_backups()
+        # Auto-cleanup old backups (30+ days) - only for local
+        if not self.is_cloud:
+            self._cleanup_old_backups()
     
     @contextmanager
     def get_connection(self):
-        """Database connection context manager"""
-        conn = sqlite3.connect(str(self.db_path), timeout=30.0)
-        conn.row_factory = sqlite3.Row
-        try:
-            yield conn
-            conn.commit()
-        except Exception as e:
-            conn.rollback()
-            self.logger.error(f"Database operation failed: {e}")
-            raise
-        finally:
-            conn.close()
+        """Cloud-compatible database connection context manager"""
+        if self.is_cloud:
+            # Use cloud storage manager for cloud deployments
+            with self.cloud_storage.get_database_connection(self.db_name) as conn:
+                yield conn
+        else:
+            # Use local SQLite for development
+            conn = sqlite3.connect(str(self.db_path), timeout=30.0)
+            conn.row_factory = sqlite3.Row
+            try:
+                yield conn
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                self.logger.error(f"Database operation failed: {e}")
+                raise
+            finally:
+                conn.close()
     
     def _init_schema(self):
         """Veritabanı şemasını oluştur"""

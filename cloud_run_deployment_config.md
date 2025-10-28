@@ -10,7 +10,7 @@ CPU Options:
 - CPU allocation: "Always allocated" (for consistent performance)
 
 Memory Options:
-- 128MB to 32GB (recommended: 8-16GB for PDF+AI processing)
+- 128MB to 32GB (recommended: 16GB for optimal PDF+AI processing)
 - Memory allocation: High for marker-pdf and sentence-transformers
 ```
 
@@ -46,12 +46,13 @@ Port: 8000 (FastAPI default)
 ### Memory & CPU for Your Use Case:
 
 ```
-PDF Processing (marker-pdf): 4-8GB RAM minimum
-AI Models (sentence-transformers): 2-4GB RAM
+PDF Processing (marker-pdf): 6-10GB RAM optimal
+AI Models (sentence-transformers): 3-5GB RAM
 Vector Operations (FAISS): 2-4GB RAM
 CUDA Libraries: 2GB+ RAM
+System Overhead: 1-2GB RAM
 
-Total Recommended: 12-16GB RAM, 4 vCPUs
+Total Recommended: 16GB RAM, 4 vCPUs (OPTIMAL CONFIGURATION)
 ```
 
 ### Container Settings:
@@ -63,12 +64,15 @@ Health Check: /health endpoint
 Startup Probe: /health with 300s timeout
 ```
 
-### Cost Estimation (12GB RAM, 4 vCPUs):
+### Cost Estimation (16GB RAM, 4 vCPUs):
 
 ```
-Light Usage (100 req/day): ~$25/month
-Medium Usage (1000 req/day): ~$120/month
-Heavy Usage (5000 req/day): ~$450/month
+Light Usage (100 req/day): ~$30/month
+Medium Usage (1000 req/day): ~$150/month
+Heavy Usage (5000 req/day): ~$550/month
+
+Note: Costs increased ~20% due to higher memory allocation,
+but performance gains justify the cost for PDF-heavy workloads.
 ```
 
 ## Deployment Commands
@@ -91,11 +95,14 @@ gcloud run deploy rag3-api \
   --platform managed \
   --region europe-west1 \
   --allow-unauthenticated \
-  --memory 12Gi \
+  --memory 16Gi \
   --cpu 4 \
   --timeout 3600 \
   --max-instances 10 \
-  --set-env-vars "GOOGLE_CLOUD_PROJECT=[PROJECT-ID]" \
+  --min-instances 0 \
+  --concurrency 5 \
+  --cpu-throttling=false \
+  --set-env-vars "GOOGLE_CLOUD_PROJECT=[PROJECT-ID],MARKER_MAX_MEMORY_MB=15000" \
   --port 8000
 ```
 

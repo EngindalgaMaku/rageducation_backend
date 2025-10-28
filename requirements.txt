@@ -56,6 +56,9 @@ sentence-transformers>=2.2.2
 # Enhanced web interface
 colorlog>=6.7.0
 
+# Cloud storage for persistent data (Google Cloud Run)
+google-cloud-storage>=2.10.0
+
 # PDF Markdown Viewer additional dependencies (optional)
 # matplotlib>=3.7.0  # Not needed - using Streamlit native charts
 # seaborn>=0.12.0    # Not needed - using Plotly for advanced viz

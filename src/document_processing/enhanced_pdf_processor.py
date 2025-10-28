@@ -20,6 +20,52 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 # Setup logger first before any other imports that might use it
 logger = logging.getLogger(__name__)
 
+# CRITICAL FIX: Set ALL environment variables BEFORE any marker imports
+# This is the root cause of cache failure - marker reads env vars at import time
+def _setup_marker_environment():
+    """Setup marker environment variables before any marker imports"""
+    cache_base = os.getenv("MARKER_CACHE_DIR", "/app/models")
+    
+    # Core cache directories - MUST match Dockerfile exactly
+    cache_vars = {
+        "TORCH_HOME": f"{cache_base}/torch",
+        "HUGGINGFACE_HUB_CACHE": f"{cache_base}/huggingface",
+        "TRANSFORMERS_CACHE": f"{cache_base}/transformers",
+        "HF_HOME": f"{cache_base}/hf_home",
+        "HF_DATASETS_CACHE": f"{cache_base}/datasets",
+        "PYTORCH_TRANSFORMERS_CACHE": f"{cache_base}/transformers",
+        
+        # Offline mode - force use of cached models only
+        "TRANSFORMERS_OFFLINE": "1",
+        "HF_HUB_OFFLINE": "1",
+        
+        # Marker-specific settings
+        "MARKER_CACHE_DIR": cache_base,
+        "MARKER_DISABLE_GEMINI": "true",
+        "MARKER_USE_LOCAL_ONLY": "true",
+        "MARKER_DISABLE_CLOUD_SERVICES": "true",
+        "MARKER_DISABLE_ALL_LLM": "true",
+        "MARKER_OCR_ONLY": "true",
+        
+        # Disable API keys to prevent cloud access
+        "GEMINI_API_KEY": "",
+        "GOOGLE_API_KEY": "",
+        "OPENAI_API_KEY": "",
+        "GROQ_API_KEY": "",
+    }
+    
+    for key, value in cache_vars.items():
+        if key not in os.environ or not os.environ[key]:
+            os.environ[key] = value
+            
+    logger.info(f"🔧 Marker environment configured - Cache base: {cache_base}")
+    logger.info(f"🔧 TORCH_HOME: {os.environ.get('TORCH_HOME')}")
+    logger.info(f"🔧 HUGGINGFACE_HUB_CACHE: {os.environ.get('HUGGINGFACE_HUB_CACHE')}")
+    logger.info(f"🔧 TRANSFORMERS_OFFLINE: {os.environ.get('TRANSFORMERS_OFFLINE')}")
+
+# Setup environment BEFORE any marker imports
+_setup_marker_environment()
+
 # Marker availability'yi dynamic olarak kontrol et
 def check_marker_availability():
     """Marker kütüphanesinin mevcut olup olmadığını kontrol et"""
@@ -236,43 +282,55 @@ class MarkerPDFProcessor:
                 logger.info("🔄 Marker converter ve modelleri yükleniyor (cached models ile)...")
                 memory_before = self._get_memory_usage()
                 
-                # Environment variables - CRASH-SAFE MODE
-                os.environ["MARKER_DISABLE_GEMINI"] = "true"
-                os.environ["MARKER_USE_LOCAL_ONLY"] = "true"
-                os.environ["MARKER_DISABLE_CLOUD_SERVICES"] = "true"
-                os.environ["MARKER_DISABLE_ALL_LLM"] = "true"  # TÜM LLM'leri devre dışı bırak
-                os.environ["MARKER_OCR_ONLY"] = "true"  # Sadece OCR kullan
-                os.environ["GEMINI_API_KEY"] = ""
-                os.environ["GOOGLE_API_KEY"] = ""
-                os.environ["OPENAI_API_KEY"] = ""
-                os.environ["GROQ_API_KEY"] = ""
+                # CRITICAL DEBUGGING: Show cache status before model loading
+                self._debug_cache_status()
                 
-                # GPU + LLM OPTIMIZED ayarları
-                os.environ["MARKER_MAX_PAGES"] = "200"  # Yüksek sayfa limiti
-                os.environ["MARKER_OCR_ALL_PAGES"] = "true"   # OCR aktif
-                os.environ["MARKER_EXTRACT_IMAGES"] = "true"  # Image extraction aktif
-                os.environ["MARKER_PARALLEL_FACTOR"] = "4"    # Multi-thread
-                os.environ["MARKER_ENABLE_BATCH_OCR"] = "true" # Batch OCR aktif
-                os.environ["MARKER_BATCH_SIZE"] = "8"  # GPU batch size
+                # Environment variables are already set at module import
+                # Just verify they're still set correctly
+                cache_dir = os.environ.get("MARKER_CACHE_DIR", "/app/models")
+                logger.info(f"🔧 Using cache directory: {cache_dir}")
+                logger.info(f"🔧 TORCH_HOME: {os.environ.get('TORCH_HOME')}")
+                logger.info(f"🔧 TRANSFORMERS_OFFLINE: {os.environ.get('TRANSFORMERS_OFFLINE')}")
                 
-                # GPU ayarları
+                # Verify cache directories exist
+                torch_cache = os.environ.get("TORCH_HOME")
+                hf_cache = os.environ.get("HUGGINGFACE_HUB_CACHE")
+                if torch_cache and not os.path.exists(torch_cache):
+                    logger.warning(f"⚠️ TORCH_HOME cache missing: {torch_cache}")
+                if hf_cache and not os.path.exists(hf_cache):
+                    logger.warning(f"⚠️ HuggingFace cache missing: {hf_cache}")
+                
+                # GPU ayarları - optional optimization
                 if self.use_gpu:
                     os.environ["MARKER_USE_GPU"] = "true"
                     os.environ["MARKER_GPU_MEMORY_FRACTION"] = "0.8"
                     os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # İlk GPU'yu kullan
                     logger.info("🚀 GPU desteği aktif - CUDA optimize edildi")
                 
-                # Use cached models if available
-                if MODEL_CACHE_AVAILABLE:
-                    logger.info("🎯 Using cached Marker models to avoid downloads...")
-                    artifact_dict = get_cached_marker_models()
-                    
-                    if artifact_dict is None:
-                        logger.warning("⚠️ Failed to load cached models, falling back to direct download")
-                        artifact_dict = create_model_dict()
+                # CRITICAL: Use environment-cached models directly
+                # The cache manager sets env vars, but marker needs direct model dict creation
+                logger.info("🎯 Creating model dict with cached environment...")
+                
+                # Verify cache exists before proceeding
+                torch_cache = os.environ.get("TORCH_HOME", "")
+                if os.path.exists(torch_cache):
+                    logger.info(f"✅ Cache verified: {torch_cache} exists")
+                    model_files = []
+                    for ext in ['*.bin', '*.safetensors', '*.pt']:
+                        import glob
+                        model_files.extend(glob.glob(os.path.join(torch_cache, '**', ext), recursive=True))
+                    logger.info(f"📁 Found {len(model_files)} cached model files")
                 else:
-                    logger.warning("⚠️ Model cache manager not available, downloading models directly")
+                    logger.warning(f"⚠️ Cache directory missing: {torch_cache}")
+                
+                # Create model dict - this will use cached models due to env vars
+                try:
                     artifact_dict = create_model_dict()
+                    logger.info("✅ Model dict created with cached models")
+                except Exception as model_error:
+                    logger.error(f"❌ Failed to create model dict: {model_error}")
+                    logger.warning("🔄 This suggests models were not properly cached during build")
+                    raise model_error
                 
                 # Optimize artifact dict - disable heavy models if available
                 if artifact_dict and 'layout' in artifact_dict:
@@ -280,18 +338,68 @@ class MarkerPDFProcessor:
                     logger.info("🔧 Marker artifact dict optimized for faster processing")
                 
                 # Sadece temel Marker converter'ı kullan - performans odaklı
+                start_time = time.time()
                 self.converter = PdfConverter(artifact_dict=artifact_dict)
+                converter_load_time = time.time() - start_time
                 
                 memory_after = self._get_memory_usage()
                 memory_used = memory_after - memory_before
-                logger.info(f"✅ Marker converter (cached) başarıyla yüklendi - Memory used: {memory_used:.1f}MB")
                 
+                # CRITICAL: Log timing to detect downloads
+                if converter_load_time > 60:
+                    logger.error(f"🚨 CONVERTER LOAD TOOK {converter_load_time:.1f}s - MODELS LIKELY DOWNLOADING!")
+                    logger.error("🚨 CACHE FIX FAILED - Check Docker build and environment variables!")
+                elif converter_load_time > 30:
+                    logger.warning(f"⚠️ Converter load took {converter_load_time:.1f}s - may be downloading")
+                else:
+                    logger.info(f"✅ Fast converter load ({converter_load_time:.1f}s) - using cached models!")
+                
+                logger.info(f"✅ Marker converter loaded - Time: {converter_load_time:.1f}s, Memory: +{memory_used:.1f}MB")
                 self.models_loaded = True
         except Exception as e:
             logger.error(f"❌ Marker converter yüklenemedi: {e}")
             logger.error(traceback.format_exc())
             self.converter = None
             self.models_loaded = False
+    
+    def _debug_cache_status(self):
+        """Debug cache status before model loading"""
+        logger.info("🔍 CACHE DEBUG STATUS:")
+        
+        cache_vars = [
+            "TORCH_HOME", "HUGGINGFACE_HUB_CACHE", "TRANSFORMERS_CACHE",
+            "HF_HOME", "TRANSFORMERS_OFFLINE", "HF_HUB_OFFLINE"
+        ]
+        
+        for var in cache_vars:
+            value = os.environ.get(var, "NOT_SET")
+            logger.info(f"🔧 {var}: {value}")
+            
+            if value != "NOT_SET" and os.path.isdir(value):
+                try:
+                    file_count = len([f for f in Path(value).rglob("*") if f.is_file()])
+                    logger.info(f"📁 {var} directory exists with {file_count} files")
+                except:
+                    logger.info(f"📁 {var} directory exists but couldn't count files")
+            elif value != "NOT_SET":
+                logger.warning(f"⚠️ {var} directory missing: {value}")
+        
+        # Check for key model files
+        torch_home = os.environ.get("TORCH_HOME", "")
+        if torch_home:
+            model_extensions = ["*.bin", "*.safetensors", "*.pt"]
+            total_models = 0
+            for ext in model_extensions:
+                import glob
+                models = glob.glob(os.path.join(torch_home, "**", ext), recursive=True)
+                total_models += len(models)
+                if models:
+                    logger.info(f"📦 Found {len(models)} {ext} files")
+            
+            if total_models == 0:
+                logger.error(f"❌ NO MODEL FILES FOUND IN CACHE! Models will download.")
+            else:
+                logger.info(f"✅ Found {total_models} total model files in cache")
     
     def _get_memory_usage(self) -> float:
         """Get current memory usage in MB"""

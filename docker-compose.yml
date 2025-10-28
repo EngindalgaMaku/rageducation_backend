@@ -5,11 +5,14 @@ services:
       dockerfile: Dockerfile.api
     container_name: rag3_api
     ports:
-      - "8000:8000"
+      - "8000:8080" # Fixed port mapping: host:8000 -> container:8080
     env_file:
       - .env
+    environment:
+      - ENVIRONMENT=development
+      - LOG_LEVEL=INFO
     volumes:
-      - ./data:/app/data
+      - ./data:/app/data # Persistent data for development
       - ./logs:/app/logs
       - ./.cache:/root/.cache
     restart: unless-stopped

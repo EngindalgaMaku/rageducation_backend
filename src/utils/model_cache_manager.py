@@ -112,23 +112,34 @@ class ModelCacheManager:
     
     def _load_cached_models(self, cached_path: Path) -> Dict[str, Any]:
         """Load models from cache"""
-        # Set environment variables to point to cached models
-        os.environ["TORCH_HOME"] = str(cached_path / "torch")
-        os.environ["HUGGINGFACE_HUB_CACHE"] = str(cached_path / "huggingface")
-        os.environ["TRANSFORMERS_CACHE"] = str(cached_path / "transformers") 
-        os.environ["HF_HOME"] = str(cached_path / "hf_home")
+        # CRITICAL: Environment variables should already be set at process start
+        # Just verify they point to the right location
+        expected_torch = str(cached_path / "torch")
+        actual_torch = os.environ.get("TORCH_HOME", "")
+        
+        if actual_torch != expected_torch:
+            logger.warning(f"⚠️ TORCH_HOME mismatch: expected {expected_torch}, got {actual_torch}")
+            # Don't override - let the process-level env vars take precedence
         
         memory_before = self._get_memory_usage()
-        logger.info(f"🔄 Loading cached models... (Memory: {memory_before:.1f}MB)")
+        logger.info(f"🔄 Loading cached models from environment... (Memory: {memory_before:.1f}MB)")
+        logger.info(f"🔧 TORCH_HOME: {os.environ.get('TORCH_HOME')}")
+        logger.info(f"🔧 TRANSFORMERS_OFFLINE: {os.environ.get('TRANSFORMERS_OFFLINE')}")
+        
+        # Verify cache exists
+        torch_cache = os.environ.get("TORCH_HOME", "")
+        if not os.path.exists(torch_cache):
+            logger.error(f"❌ Cache directory missing: {torch_cache}")
+            raise FileNotFoundError(f"Model cache not found: {torch_cache}")
         
         # Import here to use cached models
         from marker.models import create_model_dict
         
-        # Load models with cache paths set
+        # Load models with cache paths already set in environment
         model_dict = create_model_dict()
         
         memory_after = self._get_memory_usage()
-        logger.info(f"✅ Cached models loaded successfully! (Memory: {memory_after:.1f}MB, +{memory_after-memory_before:.1f}MB)")
+        logger.info(f"✅ Environment-cached models loaded! (Memory: {memory_after:.1f}MB, +{memory_after-memory_before:.1f}MB)")
         
         return model_dict
     

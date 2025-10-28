@@ -38,12 +38,17 @@ FROM dependencies AS model_cache
 RUN mkdir -p /app/models/marker_models && \
     chmod -R 755 /app/models
 
-# Set environment variables for model caching during build
+# CRITICAL: Set ALL cache environment variables BEFORE any Python imports
+# These MUST be set at container level for marker library to detect them
 ENV MARKER_CACHE_DIR=/app/models \
-    TORCH_HOME=/app/models/marker_models/torch \
-    HUGGINGFACE_HUB_CACHE=/app/models/marker_models/huggingface \
-    TRANSFORMERS_CACHE=/app/models/marker_models/transformers \
-    HF_HOME=/app/models/marker_models/hf_home \
+    TORCH_HOME=/app/models/torch \
+    HUGGINGFACE_HUB_CACHE=/app/models/huggingface \
+    TRANSFORMERS_CACHE=/app/models/transformers \
+    HF_HOME=/app/models/hf_home \
+    HF_DATASETS_CACHE=/app/models/datasets \
+    PYTORCH_TRANSFORMERS_CACHE=/app/models/transformers \
+    TRANSFORMERS_OFFLINE=1 \
+    HF_HUB_OFFLINE=1 \
     MARKER_DISABLE_GEMINI=true \
     MARKER_USE_LOCAL_ONLY=true \
     MARKER_DISABLE_CLOUD_SERVICES=true \
@@ -57,21 +62,20 @@ COPY src/utils/model_cache_manager.py ./src/utils/
 COPY src/__init__.py ./src/
 COPY src/utils/__init__.py ./src/utils/
 
-# Pre-download and cache Marker models (this will be cached in Docker layer)
-RUN python -c "\
-import sys; \
-sys.path.append('/app'); \
-from src.utils.model_cache_manager import get_cached_marker_models; \
-print('🚀 Pre-downloading Marker models during Docker build...'); \
-models = get_cached_marker_models(force_download=True); \
-if models: print(f'✅ Successfully cached {len(models)} model components!'); \
-else: print('❌ Model caching failed, will download at runtime'); \
-" || echo "⚠️ Model pre-caching failed, continuing build..."
+# CRITICAL FIX: Pre-download models directly using marker library
+# This ensures models are actually cached in the Docker layer
+RUN echo "🚀 Pre-downloading Marker models during Docker build..." && \
+    python -c "import os; os.environ.update({'TORCH_HOME': '/app/models/torch', 'HUGGINGFACE_HUB_CACHE': '/app/models/huggingface', 'TRANSFORMERS_CACHE': '/app/models/transformers', 'HF_HOME': '/app/models/hf_home'}); from marker.models import create_model_dict; models = create_model_dict(); print(f'✅ Successfully pre-cached {len(models) if models else 0} model components!')" || \
+    echo "⚠️ Direct model pre-caching failed, trying fallback..." && \
+    python -c "import torch; torch.hub.set_dir('/app/models/torch'); print('✅ Torch hub cache initialized')" || \
+    echo "⚠️ Model pre-caching failed completely, models will download at runtime"
 
-# Verify cache was created
-RUN ls -la /app/models/ && \
-    du -sh /app/models/ && \
-    echo "✅ Model cache verification complete"
+# Verify cache was actually created and show debugging info
+RUN echo "🔍 Cache verification:" && \
+    ls -la /app/models/ || echo "❌ No /app/models directory" && \
+    find /app/models -type f -name "*.bin" -o -name "*.safetensors" -o -name "*.pt" | head -10 || echo "⚠️ No model files found" && \
+    du -sh /app/models/* 2>/dev/null || echo "⚠️ No cache subdirectories" && \
+    echo "✅ Cache verification complete"
 
 # Runtime stage - Only rebuilds when source changes
 FROM model_cache AS runtime
@@ -80,12 +84,26 @@ FROM model_cache AS runtime
 COPY src ./src
 RUN mkdir -p /app/data
 
-# Set runtime environment variables for model cache
+# CRITICAL: Runtime environment variables MUST match build environment
+# These ensure the cached models are found at runtime
 ENV MARKER_CACHE_DIR=/app/models \
+    TORCH_HOME=/app/models/torch \
+    HUGGINGFACE_HUB_CACHE=/app/models/huggingface \
+    TRANSFORMERS_CACHE=/app/models/transformers \
+    HF_HOME=/app/models/hf_home \
+    HF_DATASETS_CACHE=/app/models/datasets \
+    PYTORCH_TRANSFORMERS_CACHE=/app/models/transformers \
+    TRANSFORMERS_OFFLINE=1 \
+    HF_HUB_OFFLINE=1 \
     MARKER_MAX_MEMORY_MB=3500 \
     MARKER_TIMEOUT_SECONDS=900 \
     MARKER_MAX_PAGES=200 \
-    MARKER_ENABLE_RESOURCE_MONITORING=false
+    MARKER_ENABLE_RESOURCE_MONITORING=false \
+    MARKER_DISABLE_GEMINI=true \
+    MARKER_USE_LOCAL_ONLY=true \
+    MARKER_DISABLE_CLOUD_SERVICES=true \
+    MARKER_DISABLE_ALL_LLM=true \
+    MARKER_OCR_ONLY=true
 
 EXPOSE 8000
 

@@ -22,9 +22,9 @@ class MemoryManager:
     """
     
     def __init__(self):
-        self.max_memory_mb = int(os.getenv("MARKER_MAX_MEMORY_MB", "3500"))  # Leave headroom for 4GB limit
-        self.warning_threshold = 0.85  # Warn at 85% of limit
-        self.critical_threshold = 0.95  # Force cleanup at 95% of limit
+        self.max_memory_mb = int(os.getenv("MARKER_MAX_MEMORY_MB", "15000"))  # 15GB out of 16GB Cloud Run limit
+        self.warning_threshold = 0.80  # Warn at 80% of limit (12GB)
+        self.critical_threshold = 0.90  # Force cleanup at 90% of limit (13.5GB)
         self.monitoring_active = False
         self.monitoring_thread = None
         self.stop_monitoring = threading.Event()
@@ -222,7 +222,7 @@ def get_memory_manager() -> MemoryManager:
         _memory_manager = MemoryManager()
     return _memory_manager
 
-def check_memory_available(required_mb: float = 1000) -> bool:
+def check_memory_available(required_mb: float = 2000) -> bool:  # Increased default requirement for 16GB
     """Check if enough memory is available for an operation"""
     memory_manager = get_memory_manager()
     memory_info = memory_manager.get_memory_usage()
@@ -237,16 +237,19 @@ def check_memory_available(required_mb: float = 1000) -> bool:
     return True
 
 def optimize_for_large_processing():
-    """Optimize memory settings for large file processing"""
+    """Optimize memory settings for large file processing with 16GB RAM"""
     memory_manager = get_memory_manager()
     
     # Force cleanup before starting
     memory_manager.force_cleanup()
     
-    # Start monitoring
-    memory_manager.start_monitoring(check_interval=3.0)  # More frequent checks
+    # Start monitoring with less frequent checks due to more headroom
+    memory_manager.start_monitoring(check_interval=5.0)  # Less frequent with more memory
     
-    logger.info("🔧 Memory optimized for large file processing")
+    logger.info(f"🔧 Memory optimized for large file processing - 16GB configuration")
+    logger.info(f"📊 Memory limit: {memory_manager.max_memory_mb}MB")
+    logger.info(f"⚠️ Warning threshold: {memory_manager.max_memory_mb * memory_manager.warning_threshold:.0f}MB")
+    logger.info(f"🚨 Critical threshold: {memory_manager.max_memory_mb * memory_manager.critical_threshold:.0f}MB")
     
     return memory_manager
 

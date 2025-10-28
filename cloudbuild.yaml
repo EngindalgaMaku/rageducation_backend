@@ -1,8 +1,10 @@
 # Cloud Build pipeline to build and deploy the Python FastAPI backend to Cloud Run
+# SESSION PERSISTENCE FIX: Added GCS bucket creation for persistent database storage
 
 substitutions:
   _SERVICE: "rageducation-backend"
   _REGION: "europe-west1"
+  _BUCKET_NAME: "${_SERVICE}-data-${BUILD_ID}"
 
 steps:
   # Build container using backend Dockerfile
@@ -21,7 +23,21 @@ steps:
   - name: gcr.io/cloud-builders/docker
     args: ["push", "gcr.io/$PROJECT_ID/rageducation-backend:latest"]
 
-  # Deploy to Cloud Run (fully managed)
+  # Create GCS bucket for persistent database storage
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        echo "🗄️ Creating GCS bucket for persistent session data: ${_BUCKET_NAME}"
+        gsutil mb gs://${_BUCKET_NAME} || echo "✅ Bucket may already exist"
+
+        echo "🔐 Setting bucket permissions for Cloud Run service account"
+        gsutil iam ch serviceAccount:$PROJECT_NUMBER-compute@developer.gserviceaccount.com:objectAdmin gs://${_BUCKET_NAME} || echo "⚠️ Permission setting skipped"
+
+        echo "✅ GCS bucket ready for session persistence"
+
+  # Deploy to Cloud Run (fully managed) with 16GB memory
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: gcloud
     args:
@@ -36,6 +52,21 @@ steps:
         "--platform",
         "managed",
         "--allow-unauthenticated",
+        "--memory",
+        "16Gi",
+        "--cpu",
+        "4",
+        "--timeout",
+        "3600",
+        "--max-instances",
+        "10",
+        "--min-instances",
+        "0",
+        "--concurrency",
+        "5",
+        "--cpu-throttling=false",
+        "--set-env-vars",
+        "ENVIRONMENT=production,MARKER_MAX_MEMORY_MB=15000,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GCS_BUCKET_NAME=${_SERVICE}-data-$BUILD_ID",
         "--port",
         "8080",
       ]

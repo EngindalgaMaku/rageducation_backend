@@ -1,310 +1,171 @@
 """
-Configuration management for the RAG system.
-
-This module handles loading and providing access to configuration settings,
-including API keys and other parameters, using environment variables.
+RAG3 Configuration Management
+Cloud-Ready Database Configuration with Fallback Support
 """
 
 import os
-from dotenv import load_dotenv
+from typing import Dict, Any, Optional
+from pathlib import Path
+import logging
 
-# Load environment variables from a .env file
-load_dotenv()
-
-# --- LLM Provider Configuration ---
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq")  # ollama, huggingface, together, groq, sambanova
-
-# --- Embedding Provider Configuration ---
-EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "sentence_transformers")  # ollama, sentence_transformers
-DEFAULT_SENTENCE_TRANSFORMER_MODEL = os.getenv("DEFAULT_SENTENCE_TRANSFORMER_MODEL", "all-MiniLM-L6-v2")
-
-# --- Ollama API Configuration ---
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "mxbai-embed-large")
-OLLAMA_GENERATION_MODEL = os.getenv("OLLAMA_GENERATION_MODEL", "mistral:7b")
-
-# --- Cloud API Configuration ---
-HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY", "")
-TOGETHER_API_KEY = os.getenv("TOGETHER_API_KEY", "")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-SAMBANOVA_API_KEY = os.getenv("SAMBANOVA_API_KEY", "")
-
-# --- Marker PDF Configuration ---
-# Force Marker to use only local models (disable Google Gemini)
-MARKER_DISABLE_GEMINI = os.getenv("MARKER_DISABLE_GEMINI", "true")
-MARKER_USE_LOCAL_ONLY = os.getenv("MARKER_USE_LOCAL_ONLY", "true")
-MARKER_LLM_PROVIDER = os.getenv("MARKER_LLM_PROVIDER", "ollama")
-MARKER_DISABLE_CLOUD_SERVICES = os.getenv("MARKER_DISABLE_CLOUD_SERVICES", "true")
-
-# Model Cache Configuration - CRITICAL FOR PERFORMANCE
-MARKER_CACHE_DIR = os.getenv("MARKER_CACHE_DIR", "/app/models")
-MARKER_MAX_MEMORY_MB = int(os.getenv("MARKER_MAX_MEMORY_MB", "3500"))
-MARKER_TIMEOUT_SECONDS = int(os.getenv("MARKER_TIMEOUT_SECONDS", "900"))
-MARKER_MAX_PAGES = int(os.getenv("MARKER_MAX_PAGES", "200"))
-MARKER_ENABLE_RESOURCE_MONITORING = os.getenv("MARKER_ENABLE_RESOURCE_MONITORING", "false").lower() == "true"
-
-# Explicitly disable Google services
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
-
-# --- Available Models ---
-AVAILABLE_MODELS = {
-    # Yerel modeller
-    "qwen2.5:14b": {
-        "name": "Qwen 2.5 14B",
-        "description": "Alibaba'nın güçlü çok dilli modeli - Türkçe desteği mükemmel",
-        "size": "~9GB",
-        "performance": "High",
-        "language": "Multilingual (TR/EN optimized)"
-    },
-    "mistral:7b": {
-        "name": "Mistral 7B",
-        "description": "Hızlı ve etkili Fransız yapımı model",
-        "size": "~4.4GB",
-        "performance": "High",
-        "language": "Multilingual (EN optimized)"
-    },
-    "llama3:8b": {
-        "name": "Llama 3 8B",
-        "description": "Meta'nın popüler açık kaynak modeli",
-        "size": "~4.7GB",
-        "performance": "Medium-High",
-        "language": "Multilingual"
-    },
+class RAGConfig:
+    """Centralized configuration management with cloud support"""
     
-    # Ollama Cloud modeller
-    "gpt-oss:120b-cloud": {
-        "name": "GPT-OSS 120B (Cloud)",
-        "description": "🌐 Açık kaynaklı GPT-style model - Cloud üzerinden",
-        "size": "Cloud",
-        "performance": "Very High",
-        "language": "Multilingual (Strong TR)"
-    },
-    "gpt-oss:20b-cloud": {
-        "name": "GPT-OSS 20B (Cloud)",
-        "description": "🌐 Orta ölçekli GPT model - Hızlı cloud erişim",
-        "size": "Cloud",
-        "performance": "High",
-        "language": "Multilingual (Good TR)"
-    },
-    "deepseek-v3.1:671b-cloud": {
-        "name": "DeepSeek V3.1 671B (Cloud)",
-        "description": "🌐 Dev ölçekli coding model - Programlama ve genel görevler",
-        "size": "Cloud",
-        "performance": "Extreme",
-        "language": "Multilingual (Excellent TR)"
-    },
-    "qwen3-coder:480b-cloud": {
-        "name": "Qwen3 Coder 480B (Cloud)",
-        "description": "🌐 Alibaba'nın coding modeli - Programlama odaklı",
-        "size": "Cloud",
-        "performance": "Extreme",
-        "language": "Multilingual (Perfect TR)"
-    },
-    "qwen3-vl:235b-cloud": {
-        "name": "Qwen3 VL 235B (Cloud)",
-        "description": "🌐 Vision-Language model - Görsel + metin anlayışı",
-        "size": "Cloud",
-        "performance": "Very High",
-        "language": "Multilingual (Excellent TR)"
-    },
-    "glm-4.6:cloud": {
-        "name": "GLM-4.6 (Cloud)",
-        "description": "🌐 ChatGLM ailesi - Çin yapımı güçlü model",
-        "size": "Cloud",
-        "performance": "High",
-        "language": "Multilingual (Good TR)"
-    }
-}
-
-# --- Cloud Provider Models --- (Türkçe performansına göre sıralanmış)
-CLOUD_MODELS = {
-    # Groq Models (En iyi Türkçe performansı)
-    "llama-3.1-70b-versatile": {
-        "provider": "groq",
-        "name": "Llama 3.1 70B (ÖNERİLEN)",
-        "description": "🥇 Türkçe'de en başarılı - Akıcı ve doğal dil kullanır",
-        "context_length": 131072,
-        "turkish_score": 95,
-        "free": True
-    },
-    "llama-3.1-8b-instant": {
-        "provider": "groq",
-        "name": "Llama 3.1 8B Instant (HIZLI)",
-        "description": "🚀 Hızlı ve etkili - Türkçe'de iyi performans",
-        "context_length": 131072,
-        "turkish_score": 88,
-        "free": True
-    },
-    "mixtral-8x7b-32768": {
-        "provider": "groq",
-        "name": "Mixtral 8x7B (DENGELİ)",
-        "description": "⚖️ Dengeli performans - Türkçe ve İngilizce'de tutarlı",
-        "context_length": 32768,
-        "turkish_score": 82,
-        "free": True
-    },
+    def __init__(self):
+        self.environment = os.getenv('ENVIRONMENT', 'development')
+        self.is_cloud = self.environment == 'production'
+        self.logger = logging.getLogger(__name__)
+        
+        # Database Configuration
+        self._setup_database_config()
+        
+        # Storage Configuration
+        self._setup_storage_config()
+        
+        # Model Configuration
+        self._setup_model_config()
+        
+    def _setup_database_config(self):
+        """Setup database configuration with cloud support"""
+        
+        if self.is_cloud:
+            # Cloud SQL or external database for production
+            self.database_config = {
+                'type': os.getenv('DB_TYPE', 'sqlite'),  # 'postgresql', 'sqlite'
+                'host': os.getenv('DB_HOST'),
+                'port': os.getenv('DB_PORT', '5432'),
+                'name': os.getenv('DB_NAME', 'rag3_sessions'),
+                'user': os.getenv('DB_USER'),
+                'password': os.getenv('DB_PASSWORD'),
+                'ssl': os.getenv('DB_SSL', 'true') == 'true',
+                # Cloud SQL connection for Google Cloud Run
+                'cloud_sql_connection': os.getenv('CLOUD_SQL_CONNECTION_NAME'),
+                # Fallback to Cloud Storage-backed SQLite
+                'fallback_storage': 'gcs',  # 'gcs', 'local'
+                'storage_bucket': os.getenv('GCS_BUCKET_NAME', 'rag3-data'),
+                'storage_path': 'databases/'
+            }
+        else:
+            # Local SQLite for development
+            self.database_config = {
+                'type': 'sqlite',
+                'path': 'data/analytics/sessions.db',
+                'fallback_storage': 'local'
+            }
     
-    # Hugging Face Models (Orta performans)
-    "microsoft/DialoGPT-medium": {
-        "provider": "huggingface",
-        "name": "DialoGPT Medium",
-        "description": "💬 Sohbet odaklı - Türkçe'de orta performans",
-        "context_length": 1024,
-        "turkish_score": 65,
-        "free": True
-    },
-    "mistralai/Mistral-7B-Instruct-v0.1": {
-        "provider": "huggingface",
-        "name": "Mistral 7B (HF)",
-        "description": "🔧 Instruction-tuned - Basit Türkçe görevler için",
-        "context_length": 32768,
-        "turkish_score": 72,
-        "free": True
-    },
+    def _setup_storage_config(self):
+        """Setup file storage configuration"""
+        
+        if self.is_cloud:
+            self.storage_config = {
+                'type': 'gcs',  # Google Cloud Storage
+                'bucket': os.getenv('GCS_BUCKET_NAME', 'rag3-data'),
+                'vector_path': 'vector_stores/',
+                'backup_path': 'backups/',
+                'export_path': 'exports/',
+                'markdown_path': 'markdown/',
+                'temp_path': '/tmp/rag3/',  # Cloud Run temp space
+            }
+        else:
+            self.storage_config = {
+                'type': 'local',
+                'vector_path': 'data/vector_db/sessions/',
+                'backup_path': 'data/backups/sessions/',
+                'export_path': 'data/exports/sessions/',
+                'markdown_path': 'data/markdown/',
+                'temp_path': 'data/temp/'
+            }
     
-    # Together AI Models (Alternatif seçenekler)
-    "meta-llama/Llama-2-7b-chat-hf": {
-        "provider": "together",
-        "name": "Llama 2 7B (Together)",
-        "description": "🔄 Together AI üzerinden - Türkçe orta düzey",
-        "context_length": 4096,
-        "turkish_score": 68,
-        "free": True
-    }
-}
+    def _setup_model_config(self):
+        """Setup model and caching configuration"""
+        
+        self.model_config = {
+            'embedding_provider': os.getenv('EMBEDDING_PROVIDER', 'sentence_transformers'),
+            'llm_provider': os.getenv('LLM_PROVIDER', 'groq'),
+            'cache_models': os.getenv('CACHE_MODELS', 'true') == 'true',
+            'model_cache_path': '/app/models' if self.is_cloud else 'models/',
+            'max_memory_mb': int(os.getenv('MARKER_MAX_MEMORY_MB', '3500')),
+            'timeout_seconds': int(os.getenv('MARKER_TIMEOUT_SECONDS', '900'))
+        }
+    
+    def get_database_url(self) -> str:
+        """Get database connection URL/path"""
+        
+        if self.database_config['type'] == 'postgresql':
+            if self.database_config.get('cloud_sql_connection'):
+                # Cloud SQL via Unix socket
+                return (f"postgresql://{self.database_config['user']}:"
+                       f"{self.database_config['password']}@/"
+                       f"{self.database_config['name']}"
+                       f"?host=/cloudsql/{self.database_config['cloud_sql_connection']}")
+            else:
+                # Standard PostgreSQL connection
+                return (f"postgresql://{self.database_config['user']}:"
+                       f"{self.database_config['password']}@"
+                       f"{self.database_config['host']}:"
+                       f"{self.database_config['port']}/"
+                       f"{self.database_config['name']}")
+        else:
+            # SQLite - use cloud storage path if in production
+            if self.is_cloud and self.database_config['fallback_storage'] == 'gcs':
+                # This will be handled by the storage manager
+                return 'cloud_storage'  
+            else:
+                return self.database_config.get('path', 'data/analytics/sessions.db')
+    
+    def get_storage_path(self, path_type: str) -> str:
+        """Get storage path for different resource types"""
+        return self.storage_config.get(f'{path_type}_path', '')
+    
+    def is_cloud_environment(self) -> bool:
+        """Check if running in cloud environment"""
+        return self.is_cloud
+    
+    def get_config_summary(self) -> Dict[str, Any]:
+        """Get configuration summary for logging"""
+        return {
+            'environment': self.environment,
+            'is_cloud': self.is_cloud,
+            'database_type': self.database_config['type'],
+            'storage_type': self.storage_config['type'],
+            'embedding_provider': self.model_config['embedding_provider'],
+            'llm_provider': self.model_config['llm_provider']
+        }
 
-# Default model if none specified
-DEFAULT_MODEL = "mistral:7b"
+# Global configuration instance
+config = RAGConfig()
 
-# --- GPU Optimization ---
-OLLAMA_NUM_GPU = int(os.getenv("OLLAMA_NUM_GPU", "1"))
-OLLAMA_GPU_LAYERS = int(os.getenv("OLLAMA_GPU_LAYERS", "-1"))
-OLLAMA_LOAD_TIMEOUT = int(os.getenv("OLLAMA_LOAD_TIMEOUT", "300"))
-OLLAMA_REQUEST_TIMEOUT = int(os.getenv("OLLAMA_REQUEST_TIMEOUT", "120"))
+# Helper functions for backward compatibility
+def get_database_config() -> Dict[str, Any]:
+    """Get database configuration"""
+    return config.database_config
 
-# --- Performance Settings ---
-TEMPERATURE = float(os.getenv("TEMPERATURE", "0.7"))
-MAX_TOKENS = int(os.getenv("MAX_TOKENS", "512"))
-TOP_K = int(os.getenv("TOP_K", "40"))
-TOP_P = float(os.getenv("TOP_P", "0.9"))
-REPEAT_PENALTY = float(os.getenv("REPEAT_PENALTY", "1.1"))
+def get_storage_config() -> Dict[str, Any]:
+    """Get storage configuration"""
+    return config.storage_config
 
-# --- Concurrency Settings ---
-MAX_CONCURRENT_REQUESTS = int(os.getenv("MAX_CONCURRENT_REQUESTS", "3"))
-EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "10"))
+def is_cloud_environment() -> bool:
+    """Check if running in cloud environment"""
+    return config.is_cloud_environment()
 
-# --- Cache Settings ---
-ENABLE_CACHE = os.getenv("ENABLE_CACHE", "true").lower() == "true"
-CACHE_TTL = int(os.getenv("CACHE_TTL", "3600"))
+def get_database_url() -> str:
+    """Get database URL/path"""
+    return config.get_database_url()
 
-# --- Embedding Configuration ---
-# Note: The embedding model is now defined in the Ollama section.
-# This variable is kept for compatibility but should be phased out.
-EMBEDDING_MODEL = OLLAMA_EMBEDDING_MODEL
+def setup_directories():
+    """Setup necessary directories for local development"""
+    if not config.is_cloud:
+        directories = [
+            'data/analytics',
+            'data/vector_db/sessions',
+            'data/backups/sessions',
+            'data/exports/sessions',
+            'data/markdown',
+            'data/temp'
+        ]
+        
+        for directory in directories:
+            Path(directory).mkdir(parents=True, exist_ok=True)
 
-# --- Text Chunking Configuration ---
-# Optimized chunk size for better context coherence
-CHUNK_SIZE = 800  # Increased for better text coherence
-CHUNK_OVERLAP = 150  # Increased overlap for context continuity
-CHUNK_STRATEGY = os.getenv("CHUNK_STRATEGY", "sentence")  # Default to sentence-based chunking for better coherence
-
-# --- RAG Strategy Configuration ---
-USE_MULTI_QUERY = os.getenv("USE_MULTI_QUERY", "true").lower() == "true"
-ENABLE_RERANKING = os.getenv("ENABLE_RERANKING", "true").lower() == "true"
-# Number of documents to retrieve before re-ranking. Should be larger than final top_k.
-RETRIEVAL_TOP_K = int(os.getenv("RETRIEVAL_TOP_K", "25"))
-
-# --- Vector Store Configuration ---
-DB_PATH = os.getenv("DB_PATH", "data/analytics/experiments.db")
-VECTOR_STORE_PATH = "data/vector_db/faiss_index"
-
-# --- Data Paths ---
-RAW_DATA_PATH = "data/raw/sample_documents"
-PROCESSED_DATA_PATH = "data/processed"
-
-# --- Logging Configuration ---
-LOG_LEVEL = "INFO"
-LOG_FILE = "logs/application.log"
-
-def get_config():
-    """
-    Returns a dictionary containing the main configuration settings.
-    This can be expanded to include more complex configuration logic.
-    """
-    return {
-        "ollama_base_url": OLLAMA_BASE_URL,
-        "ollama_embedding_model": OLLAMA_EMBEDDING_MODEL,
-        "ollama_generation_model": OLLAMA_GENERATION_MODEL,
-        "embedding_model": EMBEDDING_MODEL,
-        "chunk_size": CHUNK_SIZE,
-        "chunk_overlap": CHUNK_OVERLAP,
-        "vector_store_path": VECTOR_STORE_PATH,
-        "raw_data_path": RAW_DATA_PATH,
-        "processed_data_path": PROCESSED_DATA_PATH,
-        "log_level": LOG_LEVEL,
-        "log_file": LOG_FILE,
-        # GPU and Performance Settings
-        "ollama_num_gpu": OLLAMA_NUM_GPU,
-        "ollama_gpu_layers": OLLAMA_GPU_LAYERS,
-        "ollama_load_timeout": OLLAMA_LOAD_TIMEOUT,
-        "ollama_request_timeout": OLLAMA_REQUEST_TIMEOUT,
-        "temperature": TEMPERATURE,
-        "max_tokens": MAX_TOKENS,
-        "top_k": TOP_K,
-        "top_p": TOP_P,
-        "repeat_penalty": REPEAT_PENALTY,
-        # Concurrency Settings
-        "max_concurrent_requests": MAX_CONCURRENT_REQUESTS,
-        "embedding_batch_size": EMBEDDING_BATCH_SIZE,
-        # Cache Settings
-        "enable_cache": ENABLE_CACHE,
-        "cache_ttl": CACHE_TTL,
-        # RAG Strategy Settings
-        "use_multi_query": USE_MULTI_QUERY,
-        "enable_reranking": ENABLE_RERANKING,
-        "retrieval_top_k": RETRIEVAL_TOP_K,
-        # Available Models
-        "available_models": AVAILABLE_MODELS,
-        "cloud_models": CLOUD_MODELS,
-        "default_model": DEFAULT_MODEL,
-        # Cloud API Keys
-        "groq_api_key": GROQ_API_KEY,
-        "huggingface_api_key": HUGGINGFACE_API_KEY,
-        "together_api_key": TOGETHER_API_KEY,
-        # Marker PDF Configuration
-        "marker_disable_gemini": MARKER_DISABLE_GEMINI,
-        "marker_use_local_only": MARKER_USE_LOCAL_ONLY,
-        "marker_llm_provider": MARKER_LLM_PROVIDER,
-        "marker_disable_cloud_services": MARKER_DISABLE_CLOUD_SERVICES,
-        "gemini_api_key": GEMINI_API_KEY,
-        "google_api_key": GOOGLE_API_KEY,
-        # Model Cache Configuration
-        "marker_cache_dir": MARKER_CACHE_DIR,
-        "marker_max_memory_mb": MARKER_MAX_MEMORY_MB,
-        "marker_timeout_seconds": MARKER_TIMEOUT_SECONDS,
-        "marker_max_pages": MARKER_MAX_PAGES,
-        "marker_enable_resource_monitoring": MARKER_ENABLE_RESOURCE_MONITORING,
-        # Embedding Configuration
-        "embedding_provider": EMBEDDING_PROVIDER,
-        "default_sentence_transformer_model": DEFAULT_SENTENCE_TRANSFORMER_MODEL,
-    }
-
-def get_available_models():
-    """Get list of available models with their information."""
-    return AVAILABLE_MODELS
-
-def set_generation_model(model_name: str):
-    """Set the generation model for the current session."""
-    import os
-    os.environ["OLLAMA_GENERATION_MODEL"] = model_name
-    global OLLAMA_GENERATION_MODEL
-    OLLAMA_GENERATION_MODEL = model_name
-
-if __name__ == "__main__":
-    # Print the configuration for verification
-    config = get_config()
-    print("--- System Configuration ---")
-    for key, value in config.items():
-        print(f"{key}: {value}")
-    print("--------------------------")
+# Initialize directories on import
+setup_directories()
