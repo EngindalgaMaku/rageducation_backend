@@ -10,11 +10,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 # Import the enhanced PDF processor
-# from src.document_processing.enhanced_pdf_processor import enhanced_pdf_processor
+from src.document_processing.enhanced_pdf_processor import process_pdf_with_analysis
 
 # Reuse existing logic from the project
-# Temporarily commented out to fix Streamlit import issue
+from src.app_logic import retrieve_and_answer
+from src.embedding.embedding_generator import generate_embeddings, get_selected_provider
+from src.text_processing.text_chunker import chunk_text
 from src.utils.language_detector import detect_query_language
+from src.utils.logger import get_logger
 from src.vector_store.faiss_store import FaissVectorStore
 from src.services.session_manager import (
     professional_session_manager,
@@ -32,6 +35,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.get("/")
+def root():
+    return {"service": "rageducation-backend", "status": "ok"}
 
 
 class CreateSessionRequest(BaseModel):
@@ -312,7 +319,7 @@ async def upload_document(
     strategy: str = Form("markdown"),
     chunk_size: int = Form(1000),
     chunk_overlap: int = Form(100),
-    embedding_model: str = Form("mxbai-embed-large"),
+    embedding_model: str = Form("mixedbread-ai/mxbai-embed-large-v1"),
     file: UploadFile = File(...),
 ):
     # Resolve store by session_id (backward-compatible path handling)
@@ -321,13 +328,21 @@ async def upload_document(
     os.makedirs("data/vector_db/sessions", exist_ok=True)
     safe = session_id.strip().replace(" ", "_") or "default"
     index_path = os.path.join("data/vector_db/sessions", safe)
-    # store = FaissVectorStore(index_path=index_path)  # Commented out for now
-    store = None  # Placeholder
+    store = FaissVectorStore(index_path=index_path)
 
     content = await file.read()
     try:
-        # Temporary: basic document processing without app_logic dependency
-        stats = {"chunks": 0, "added": 0}  # Placeholder
+        # Use app_logic to process and add document
+        from src.app_logic import add_document_to_store
+        stats = add_document_to_store(
+            file_bytes=content,
+            filename=file.filename,
+            vector_store=store,
+            strategy=strategy,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            embedding_model=embedding_model,
+        )
         # Optionally update session stats here if needed
         return {"ok": True, "stats": stats}
     except Exception as e:
@@ -341,24 +356,31 @@ def rag_query(req: RAGQueryRequest):
     os.makedirs("data/vector_db/sessions", exist_ok=True)
     safe = req.session_id.strip().replace(" ", "_") or "default"
     index_path = os.path.join("data/vector_db/sessions", safe)
-    # store = FaissVectorStore(index_path=index_path)  # Commented out for now
-    store = None  # Placeholder
+    store = FaissVectorStore(index_path=index_path)
 
     if not req.query or not req.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
 
     try:
-        # Temporary: basic query response without app_logic dependency
-        result = ("Sorry, this feature is temporarily disabled due to dependency issues.", [], [], [])
-        # retrieve_and_answer returns (answer, retrieved_texts, scores, metas)
-        if isinstance(result, tuple) and len(result) >= 2:
-            answer, retrieved_texts = result[0], result[1]
-            # Convert retrieved texts to source labels
-            sources = [f"Source {i+1}" for i in range(len(retrieved_texts))]
-        else:
-            answer = str(result) if result else "No answer generated"
-            sources = []
-        return RAGQueryResponse(answer=answer, sources=sources)
+        # Use the actual RAG logic
+        answer, sources, scores, metas = retrieve_and_answer(
+            vector_store=store,
+            query=req.query,
+            top_k=req.top_k,
+            use_rerank=req.use_rerank,
+            min_score=req.min_score,
+            max_context_chars=req.max_context_chars,
+            generation_model=req.model,
+        )
+        
+        # Create source labels from metadata
+        source_labels = []
+        if sources:
+            from src.app_logic import label_from_meta
+            for i, (text, meta) in enumerate(zip(sources, metas)):
+                source_labels.append(label_from_meta(meta, text))
+
+        return RAGQueryResponse(answer=answer, sources=source_labels)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"RAG query failed: {e}")
 
@@ -386,8 +408,8 @@ async def convert_pdf_to_markdown(file: UploadFile = File(...)):
             
             try:
                 # Process PDF with enhanced processor to get markdown
-                # markdown_content, metadata = enhanced_pdf_processor.process_pdf_with_marker(tmp_file.name)  # Commented out
-                markdown_content, metadata = "Sample markdown content", {"processed": True}  # Placeholder
+                from src.document_processing.enhanced_pdf_processor import process_pdf_with_analysis
+                markdown_content, metadata = process_pdf_with_analysis(tmp_file.name)
                 
                 if not markdown_content:
                     raise HTTPException(status_code=500, detail="Failed to extract content from PDF")
@@ -515,8 +537,7 @@ def add_markdown_documents_to_session(req: AddMarkdownDocumentsRequest):
         os.makedirs("data/vector_db/sessions", exist_ok=True)
         safe = req.session_id.strip().replace(" ", "_") or "default"
         index_path = os.path.join("data/vector_db/sessions", safe)
-        # store = FaissVectorStore(index_path=index_path)  # Commented out for now
-        store = None  # Placeholder
+        store = FaissVectorStore(index_path=index_path)
         
         processed_count = 0
         total_chunks_added = 0
@@ -541,8 +562,14 @@ def add_markdown_documents_to_session(req: AddMarkdownDocumentsRequest):
                     errors.append(f"File is empty: {filename}")
                     continue
                 
-                # Temporary: basic markdown processing without app_logic dependency
-                stats = {"chunks": 1, "added": 1}  # Placeholder
+                # Use the existing logic to process the text content
+                stats = add_text_content_to_store(
+                    text_content=markdown_content,
+                    filename=filename,
+                    vector_store=store,
+                    strategy="markdown",
+                    # Use default chunking/embedding params for this endpoint
+                )
                 
                 processed_count += 1
                 total_chunks_added += stats.get("chunks", 0)
@@ -599,8 +626,7 @@ def configure_and_process_rag(req: RAGConfigureAndProcessRequest):
         os.makedirs("data/vector_db/sessions", exist_ok=True)
         safe = req.session_id.strip().replace(" ", "_") or "default"
         index_path = os.path.join("data/vector_db/sessions", safe)
-        # store = FaissVectorStore(index_path=index_path)  # Commented out for now
-        store = None  # Placeholder
+        store = FaissVectorStore(index_path=index_path)
         
         documents_processed = 0
         total_chunks_created = 0
@@ -626,8 +652,18 @@ def configure_and_process_rag(req: RAGConfigureAndProcessRequest):
                     errors.append(f"File is empty: {filename}")
                     continue
                 
-                # Temporary: basic content processing without app_logic dependency
-                stats = {"chunks": 1, "added": 1}  # Placeholder
+                # Use the enhanced logic to process content and store chunks
+                stats = add_text_content_to_store_with_chunk_storage(
+                    text_content=markdown_content,
+                    filename=filename,
+                    vector_store=store,
+                    session_id=req.session_id,
+                    global_chunk_index=global_chunk_index,
+                    strategy=req.chunk_strategy,
+                    chunk_size=req.chunk_size,
+                    chunk_overlap=req.chunk_overlap,
+                    embedding_model=req.embedding_model,
+                )
                 
                 documents_processed += 1
                 chunks_added = stats.get("chunks", 0)
@@ -764,11 +800,7 @@ def _clear_session_data(session_id: str):
         
     except Exception as e:
         # Log error but don't fail the whole operation
-        # from src.utils.logger import get_logger  # Commented out to avoid streamlit dependency
-        class MockLogger:
-            def error(self, *args): pass
-        def get_logger(*args): return MockLogger()
-        logger = get_logger(__name__, {})
+        logger = get_logger(__name__)
         logger.error(f"Error clearing session data for {session_id}: {e}")
         # Re-raise to let the calling function handle it
         raise
@@ -784,17 +816,12 @@ def add_text_content_to_store_with_chunk_storage(
     strategy: str = "markdown",
     chunk_size: int = 1000,
     chunk_overlap: int = 100,
-    embedding_model: str = "mxbai-embed-large",
+    embedding_model: str = "mixedbread-ai/mxbai-embed-large-v1",
 ) -> dict:
     """
     Add text content directly to vector store and store chunk text in database.
     Enhanced version of add_text_content_to_store that also stores chunks in the database.
     """
-    # from src.text_processing.text_chunker import chunk_text  # Commented out to avoid streamlit dependency
-    # from src.embedding.embedding_generator import generate_embeddings  # Commented out to avoid streamlit dependency
-    def chunk_text(*args, **kwargs): return []  # Placeholder
-    def generate_embeddings(*args, **kwargs): return []  # Placeholder
-    
     if not text_content:
         return {"added": 0, "chunks": 0, "embedding_dim": None}
     
@@ -809,8 +836,7 @@ def add_text_content_to_store_with_chunk_storage(
         return {"added": 0, "chunks": 0, "embedding_dim": None}
     
     # Generate embeddings using provider-aware logic
-    # selected_provider = get_selected_provider()  # Commented out to avoid streamlit dependency
-    selected_provider = 'groq'  # Hardcoded placeholder
+    selected_provider = get_selected_provider()
     if selected_provider == 'ollama':
         embeddings = generate_embeddings(chunks, model=embedding_model, provider='ollama')
     else:
@@ -820,7 +846,7 @@ def add_text_content_to_store_with_chunk_storage(
     if not embeddings:
         return {"added": 0, "chunks": len(chunks), "embedding_dim": None}
     
-    embedding_dim = len(embeddings[0]) if embeddings and isinstance(embeddings, list) and embeddings else None
+    embedding_dim = len(embeddings) if embeddings and isinstance(embeddings, list) and embeddings else None
     before = vector_store.index.ntotal if vector_store.index is not None else 0
     
     # Build per-chunk metadata similar to add_document_to_store
@@ -923,17 +949,12 @@ def add_text_content_to_store(
     strategy: str = "markdown",
     chunk_size: int = 1000,
     chunk_overlap: int = 100,
-    embedding_model: str = "mxbai-embed-large",
+    embedding_model: str = "mixedbread-ai/mxbai-embed-large-v1",
 ) -> dict:
     """
     Add text content directly to vector store (for markdown files that are already saved).
     This is similar to add_document_to_store but works with text content directly.
     """
-    # from src.text_processing.text_chunker import chunk_text  # Commented out to avoid streamlit dependency
-    # from src.embedding.embedding_generator import generate_embeddings  # Commented out to avoid streamlit dependency
-    def chunk_text(*args, **kwargs): return []  # Placeholder
-    def generate_embeddings(*args, **kwargs): return []  # Placeholder
-    
     if not text_content:
         return {"added": 0, "chunks": 0, "embedding_dim": None}
     
@@ -948,8 +969,7 @@ def add_text_content_to_store(
         return {"added": 0, "chunks": 0, "embedding_dim": None}
     
     # Generate embeddings using provider-aware logic
-    # selected_provider = get_selected_provider()  # Commented out to avoid streamlit dependency
-    selected_provider = 'groq'  # Hardcoded placeholder
+    selected_provider = get_selected_provider()
     if selected_provider == 'ollama':
         embeddings = generate_embeddings(chunks, model=embedding_model, provider='ollama')
     else:
@@ -959,7 +979,7 @@ def add_text_content_to_store(
     if not embeddings:
         return {"added": 0, "chunks": len(chunks), "embedding_dim": None}
     
-    embedding_dim = len(embeddings[0]) if embeddings and isinstance(embeddings, list) and embeddings else None
+    embedding_dim = len(embeddings) if embeddings and isinstance(embeddings, list) and embeddings else None
     before = vector_store.index.ntotal if vector_store.index is not None else 0
     
     # Build per-chunk metadata similar to add_document_to_store

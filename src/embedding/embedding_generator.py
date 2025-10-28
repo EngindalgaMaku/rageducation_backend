@@ -38,12 +38,9 @@ ollama_client = None
 sentence_transformer_model = None
 
 def get_selected_provider() -> str:
-    """Get the currently selected provider from session state or config."""
-    try:
-        import streamlit as st
-        return st.session_state.get('selected_provider', 'groq')
-    except:
-        return 'groq'  # Default to groq if streamlit not available
+    """Get the currently selected provider from environment (default: 'groq')."""
+    import os
+    return os.environ.get("RAG_PROVIDER", "groq")
 
 def init_ollama_client():
     """Initialize Ollama client on demand."""
