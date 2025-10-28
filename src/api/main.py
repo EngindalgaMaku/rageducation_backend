@@ -31,7 +31,7 @@ def root():
 class CreateSessionRequest(BaseModel):
     name: str
     description: Optional[str] = ""
-    category: SessionCategory
+    category: str  # Changed from SessionCategory to str to avoid import issues
     created_by: str = "system"
     grade_level: Optional[str] = ""
     subject_area: Optional[str] = ""
@@ -193,13 +193,17 @@ def create_changelog_entry(req: CreateChangelogEntryRequest):
 
 
 @app.get("/sessions", response_model=List[SessionResponse])
-def list_sessions(created_by: Optional[str] = None, category: Optional[SessionCategory] = None,
-                  status: Optional[SessionStatus] = None, limit: int = 50):
+def list_sessions(created_by: Optional[str] = None, category: Optional[str] = None,
+                  status: Optional[str] = None, limit: int = 50):
     from src.services.session_manager import professional_session_manager, SessionCategory, SessionStatus
+    
+    # Convert string parameters to enum types if needed
+    category_enum = SessionCategory(category) if category else None
+    status_enum = SessionStatus(status) if status else None
     sessions = professional_session_manager.list_sessions(
         created_by=created_by,
-        category=category,
-        status=status,
+        category=category_enum,
+        status=status_enum,
         limit=limit,
     )
     res: List[SessionResponse] = []
@@ -230,12 +234,15 @@ def list_sessions(created_by: Optional[str] = None, category: Optional[SessionCa
 
 @app.post("/sessions", response_model=SessionResponse)
 def create_session(req: CreateSessionRequest):
-    from src.services.session_manager import professional_session_manager
+    from src.services.session_manager import professional_session_manager, SessionCategory
     try:
+        # Convert string category to enum
+        category_enum = SessionCategory(req.category) if req.category else SessionCategory.RESEARCH
+        
         meta = professional_session_manager.create_session(
             name=req.name,
             description=req.description or "",
-            category=req.category,
+            category=category_enum,
             created_by=req.created_by,
             grade_level=req.grade_level or "",
             subject_area=req.subject_area or "",
@@ -710,6 +717,9 @@ def get_chunks_for_session(session_id: str):
     This endpoint fetches chunk data that was stored during the RAG processing.
     """
     try:
+        # Import session manager locally to avoid startup issues
+        from src.services.session_manager import professional_session_manager
+        
         # Validate session exists
         session_meta = professional_session_manager.get_session_metadata(session_id)
         if not session_meta:
@@ -770,6 +780,9 @@ def _clear_session_data(session_id: str):
     - Resetting session metadata counts
     """
     try:
+        # Import session manager locally
+        from src.services.session_manager import professional_session_manager
+        
         # 1. Clear document chunks from database
         with professional_session_manager.get_connection() as conn:
             cursor = conn.cursor()
@@ -806,8 +819,7 @@ def _clear_session_data(session_id: str):
         
     except Exception as e:
         # Log error but don't fail the whole operation
-        logger = get_logger(__name__)
-        logger.error(f"Error clearing session data for {session_id}: {e}")
+        print(f"Error clearing session data for {session_id}: {e}")
         # Re-raise to let the calling function handle it
         raise
 
@@ -831,6 +843,9 @@ def add_text_content_to_store_with_chunk_storage(
     if not text_content:
         return {"added": 0, "chunks": 0, "embedding_dim": None}
     
+    # Import chunking function locally
+    from src.app_logic import chunk_text
+    
     # Chunk the text content
     chunks = chunk_text(
         text_content,
@@ -840,6 +855,9 @@ def add_text_content_to_store_with_chunk_storage(
     )
     if not chunks:
         return {"added": 0, "chunks": 0, "embedding_dim": None}
+    
+    # Import embedding functions locally
+    from src.app_logic import generate_embeddings, get_selected_provider
     
     # Generate embeddings using provider-aware logic
     selected_provider = get_selected_provider()
@@ -928,6 +946,9 @@ def _store_document_chunks_in_db(session_id: str, document_name: str, chunks: Li
     """
     import json
     
+    # Import session manager locally
+    from src.services.session_manager import professional_session_manager
+    
     # Get database connection through session manager
     with professional_session_manager.get_connection() as conn:
         cursor = conn.cursor()
@@ -964,6 +985,9 @@ def add_text_content_to_store(
     if not text_content:
         return {"added": 0, "chunks": 0, "embedding_dim": None}
     
+    # Import chunking function locally
+    from src.app_logic import chunk_text
+    
     # Chunk the text content
     chunks = chunk_text(
         text_content,
@@ -973,6 +997,9 @@ def add_text_content_to_store(
     )
     if not chunks:
         return {"added": 0, "chunks": 0, "embedding_dim": None}
+    
+    # Import embedding functions locally
+    from src.app_logic import generate_embeddings, get_selected_provider
     
     # Generate embeddings using provider-aware logic
     selected_provider = get_selected_provider()

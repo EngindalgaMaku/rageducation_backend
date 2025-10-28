@@ -103,9 +103,10 @@ ENV MARKER_CACHE_DIR=/app/models \
     MARKER_USE_LOCAL_ONLY=true \
     MARKER_DISABLE_CLOUD_SERVICES=true \
     MARKER_DISABLE_ALL_LLM=true \
-    MARKER_OCR_ONLY=true
+    MARKER_OCR_ONLY=true \
+    PYTHONPATH=/app
 
 EXPOSE 8080
 
-# Default command: run FastAPI with Cloud Run PORT support
-CMD ["python", "src/api/main.py"]
+# Default command: use smart startup script that chooses the best API version
+CMD ["python", "startup.py"]
