@@ -27,9 +27,9 @@ RUN apt-get update \
 WORKDIR /app
 
 # Install Python deps - THIS LAYER WILL BE CACHED
-COPY requirements-minimal.txt ./
+COPY requirements.txt ./
 RUN pip install --upgrade pip \
-    && pip install -r requirements-minimal.txt
+    && pip install -r requirements.txt
 
 # Runtime stage - Only rebuilds when source changes
 FROM dependencies AS runtime
