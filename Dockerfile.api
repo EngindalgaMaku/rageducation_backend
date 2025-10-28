@@ -8,19 +8,21 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # System deps for marker-pdf and other dependencies
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-       build-essential \
-       curl \
-       git \
-       libgl1-mesa-dev \
-       libglib2.0-0 \
-       libsm6 \
-       libxext6 \
-       libxrender1 \
-       libgomp1 \
-       libgcc-s1 \
-       ffmpeg \
-       libfontconfig1 \
-    && rm -rf /var/lib/apt/lists/*
+      build-essential \
+      curl \
+      git \
+      libgl1-mesa-dev \
+      libglib2.0-0 \
+      libsm6 \
+      libxext6 \
+      libxrender1 \
+      libgomp1 \
+      libgcc-s1 \
+      ffmpeg \
+      libfontconfig1 \
+      libxml2-dev \
+      libxslt-dev \
+   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -39,4 +41,4 @@ RUN mkdir -p /app/data
 EXPOSE 8000
 
 # Default command: run FastAPI
-CMD ["python", "-m", "uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8080"]
