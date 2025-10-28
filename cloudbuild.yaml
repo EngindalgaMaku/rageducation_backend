@@ -19,13 +19,22 @@ steps:
     entrypoint: gcloud
     args:
       [
-        "run", "deploy", "${_SERVICE}",
-        "--image", "${_IMAGE}",
-        "--region", "${_REGION}",
-        "--platform", "managed",
+        "run",
+        "deploy",
+        "${_SERVICE}",
+        "--image",
+        "${_IMAGE}",
+        "--region",
+        "${_REGION}",
+        "--platform",
+        "managed",
         "--allow-unauthenticated",
-        "--port", "8000"
+        "--port",
+        "8000",
       ]
 
 images:
   - ${_IMAGE}
+
+options:
+  logging: CLOUD_LOGGING_ONLY
