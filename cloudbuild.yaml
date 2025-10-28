@@ -3,16 +3,23 @@
 substitutions:
   _SERVICE: "rageducation-backend"
   _REGION: "europe-west1"
-  _IMAGE: "gcr.io/$PROJECT_ID/rageducation-backend:latest"
 
 steps:
   # Build container using backend Dockerfile
   - name: gcr.io/cloud-builders/docker
-    args: ["build", "-t", "${_IMAGE}", "-f", "Dockerfile.api", "."]
+    args:
+      [
+        "build",
+        "-t",
+        "gcr.io/$PROJECT_ID/rageducation-backend:latest",
+        "-f",
+        "Dockerfile.api",
+        ".",
+      ]
 
   # Push container image
   - name: gcr.io/cloud-builders/docker
-    args: ["push", "${_IMAGE}"]
+    args: ["push", "gcr.io/$PROJECT_ID/rageducation-backend:latest"]
 
   # Deploy to Cloud Run (fully managed)
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
@@ -23,7 +30,7 @@ steps:
         "deploy",
         "${_SERVICE}",
         "--image",
-        "${_IMAGE}",
+        "gcr.io/$PROJECT_ID/rageducation-backend:latest",
         "--region",
         "${_REGION}",
         "--platform",
@@ -34,7 +41,7 @@ steps:
       ]
 
 images:
-  - ${_IMAGE}
+  - "gcr.io/$PROJECT_ID/rageducation-backend:latest"
 
 options:
   logging: CLOUD_LOGGING_ONLY
