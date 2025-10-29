@@ -1,3 +1,4 @@
+version: "3.8"
 services:
   api:
     build:
@@ -11,6 +12,7 @@ services:
     environment:
       - ENVIRONMENT=development
       - LOG_LEVEL=INFO
+      - CHROMADB_URL=http://chromadb:8000
     volumes:
       - ./data:/app/data # Persistent data for development
       - ./logs:/app/logs
@@ -29,3 +31,27 @@ services:
     depends_on:
       - api
     restart: unless-stopped
+
+  pdf-processor:
+    build:
+      context: ./services/pdf_processing_service
+    ports:
+      - "8001:8001"
+
+  model-inferencer:
+    build:
+      context: ./services/model_inference_service
+    ports:
+      - "8002:8002"
+
+  chromadb:
+    image: chromadb/chroma
+    container_name: rag3_chromadb
+    ports:
+      - "8004:8000"
+    volumes:
+      - chroma_data:/chroma/.chroma/
+    restart: unless-stopped
+
+volumes:
+  chroma_data:

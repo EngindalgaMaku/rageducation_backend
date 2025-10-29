@@ -26,8 +26,14 @@ def get_logger(name: str, config: Dict[str, Any] = None) -> logging.Logger:
     
     # Set level from config or default to INFO
     log_level = logging.INFO
-    if config and 'log_level' in config:
-        log_level = getattr(logging, config['log_level'].upper(), logging.INFO)
+    if config:
+        # Handle both dictionary-style and object-style config
+        if hasattr(config, 'LOG_LEVEL'):
+            # RAGConfig object style
+            log_level = getattr(logging, config.LOG_LEVEL.upper(), logging.INFO)
+        elif isinstance(config, dict) and 'log_level' in config:
+            # Dictionary style
+            log_level = getattr(logging, config['log_level'].upper(), logging.INFO)
     
     logger.setLevel(log_level)
     

@@ -1,64 +1,31 @@
-# PDF processing - Enhanced with Marker for better quality
-PyPDF2
-marker-pdf[full]>=0.2.15
-
-# DOCX processing
-python-docx
-
-# PPTX processing
-python-pptx
-
-# Ollama for local LLM
-ollama>=0.1.7
-
-# Vector store (GPU version for better performance)
-faiss-cpu>=1.7.4
-numpy
-
-# Configuration management
-python-dotenv
-
-# HTTP requests for cloud LLM services
-requests>=2.31.0
-
-# Web search for recommendations
-duckduckgo-search
-
-# Streamlit for UI (removed)
+# API Gateway Service - Minimal requirements for orchestration only
+# Other dependencies moved to individual microservices
 
 # API server
 fastapi>=0.111.0
 uvicorn[standard]>=0.30.0
 python-multipart>=0.0.9
 
-# Data analysis
-pandas
+# Configuration management
+python-dotenv
 
-# Performance optimizations
-concurrent-futures; python_version < "3.2"
+# HTTP requests for inter-service communication
+requests>=2.31.0
 
-# Memory management and resource monitoring
-psutil>=5.9.0
-
-# Academic dashboard visualization
-plotly>=5.17.0
-
-# GPU monitoring (optional)
-pynvml>=11.5.0
-
-# Scientific computing
-scipy>=1.11.3
-scikit-learn>=1.3.0
-
-# Re-ranking for RAG
-sentence-transformers>=2.2.2
-
-# Enhanced web interface
+# Enhanced logging
 colorlog>=6.7.0
+
+# Session management (SQLite is built-in Python)
+# No additional requirements needed
 
 # Cloud storage for persistent data (Google Cloud Run)
 google-cloud-storage>=2.10.0
 
-# PDF Markdown Viewer additional dependencies (optional)
-# matplotlib>=3.7.0  # Not needed - using Streamlit native charts
-# seaborn>=0.12.0    # Not needed - using Plotly for advanced viz
+# MOVED TO MICROSERVICES:
+# - PyPDF2, marker-pdf → pdf_processing_service
+# - python-docx, python-pptx → document_processing_service
+# - ollama, groq → model_inference_service
+# - chromadb, faiss-cpu, numpy → document_processing_service
+# - sentence-transformers → model_inference_service
+# - psutil → pdf_processing_service (for memory management)
+# - pandas, scipy, scikit-learn, plotly, pynvml → removed (not needed in API Gateway)

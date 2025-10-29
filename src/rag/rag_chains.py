@@ -18,7 +18,7 @@ import ollama
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from src.utils.logger import get_logger
 from src.config import is_cloud_environment
-from src.vector_store.faiss_store import FaissVectorStore
+from src.vector_store.chroma_store import ChromaVectorStore
 from src.embedding.embedding_generator import generate_embeddings
 from src.utils.prompt_templates import BilingualPromptManager
 from src.utils.language_detector import detect_language
@@ -29,16 +29,16 @@ class BaseRAGChain(ABC):
     Abstract base class for all RAG chain implementations.
     """
     
-    def __init__(self, config: Dict[str, Any], faiss_store: FaissVectorStore):
+    def __init__(self, config: Dict[str, Any], chroma_store: ChromaVectorStore):
         """
         Initialize base RAG chain.
         
         Args:
             config: System configuration
-            faiss_store: Vector store instance
+            chroma_store: ChromaDB vector store instance
         """
         self.config = config
-        self.faiss_store = faiss_store
+        self.chroma_store = chroma_store
         self.logger = get_logger(__name__, config)
         
         # Initialize Ollama client
@@ -128,7 +128,7 @@ class BaseRAGChain(ABC):
             else:
                 initial_k = top_k
             
-            search_results = self.faiss_store.search(query_embedding, initial_k)
+            search_results = self.chroma_store.search(query_embedding, initial_k)
             
             # Convert to the format expected by re-ranker
             retrieved_chunks = []
@@ -624,15 +624,15 @@ class RAGChainFactory:
     """
     
     @staticmethod
-    def create_chain(chain_type: str, config: Dict[str, Any], 
-                    faiss_store: FaissVectorStore) -> BaseRAGChain:
+    def create_chain(chain_type: str, config: Dict[str, Any],
+                    chroma_store: ChromaVectorStore) -> BaseRAGChain:
         """
         Create a RAG chain instance.
         
         Args:
             chain_type: Type of chain to create
             config: System configuration
-            faiss_store: Vector store instance
+            chroma_store: ChromaDB vector store instance
             
         Returns:
             RAG chain instance
@@ -646,4 +646,4 @@ class RAGChainFactory:
         if chain_type not in chain_map:
             raise ValueError(f"Unknown chain type: {chain_type}")
         
-        return chain_map[chain_type](config, faiss_store)
+        return chain_map[chain_type](config, chroma_store)

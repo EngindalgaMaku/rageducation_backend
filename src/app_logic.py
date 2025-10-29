@@ -1,16 +1,18 @@
 import os
 import re
 import time
+import requests
 from datetime import datetime
 from src import config as app_config
+from src.config import get_model_inference_url
 from src.document_processing.document_processor import process_document
 from src.document_processing.enhanced_pdf_processor import extract_text_from_pdf_enhanced, process_pdf_with_analysis, MARKER_AVAILABLE
 from src.text_processing.text_chunker import chunk_text
+from src.text_processing.semantic_chunker import create_semantic_chunks
 from src.embedding.embedding_generator import generate_embeddings
 from src.vector_store.faiss_store import FaissVectorStore
 from src.utils.performance_monitor import get_performance_monitor, measure_performance
 from src.utils.prompt_templates import prompt_manager
-from src.utils.cloud_llm_client import CloudLLMClient
 from src.utils.language_detector import detect_query_language
 from src.services.prompt_manager import teacher_prompt_manager, PromptPerformance
 
@@ -18,6 +20,33 @@ from src.services.prompt_manager import teacher_prompt_manager, PromptPerformanc
 def get_selected_provider() -> str:
     """Get the currently selected provider from environment (default: 'groq')."""
     return os.environ.get("RAG_PROVIDER", "groq")
+
+
+def call_model_inference_service(prompt: str, model: str = None, temperature: float = 0.3, max_tokens: int = 1024) -> str:
+    """Helper function to call the Model Inference Service."""
+    try:
+        model_inference_url = get_model_inference_url()
+        request_data = {
+            "prompt": prompt,
+            "model": model or "llama-3.1-8b-instant",
+            "temperature": temperature,
+            "max_tokens": max_tokens
+        }
+        
+        response = requests.post(
+            f"{model_inference_url}/models/generate",
+            json=request_data,
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            return result.get("response", "")
+        else:
+            return ""
+            
+    except Exception as e:
+        return ""
 
 
 def is_groq_model(model_name: str) -> bool:
@@ -116,12 +145,45 @@ def add_document_to_store(
     if not text:
         return {"added": 0, "chunks": 0, "embedding_dim": None}
     
-    chunks = chunk_text(
-        text,
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-        strategy=strategy,  # type: ignore[arg-type]
-    )
+    # Use GROQ-powered semantic chunking if available
+    try:
+        print(f"🧠 Using GROQ-powered semantic chunking...")
+        print(f"🔧 Text length: {len(text)}, target_size: {chunk_size or 800}, overlap_ratio: {(chunk_overlap or 100) / (chunk_size or 800)}")
+        print(f"🔧 Fallback strategy: {strategy or 'markdown'}")
+        
+        chunks = create_semantic_chunks(
+            text,
+            target_size=chunk_size or 800,
+            overlap_ratio=(chunk_overlap or 100) / (chunk_size or 800),
+            language="auto",
+            fallback_strategy=strategy or "markdown"
+        )
+        
+        # Verify if chunks are actually from semantic chunking or fallback
+        if chunks:
+            print(f"✅ Semantic chunking returned {len(chunks)} chunks")
+            
+            # Check first chunk characteristics to see if it's semantic or fallback
+            first_chunk = chunks[0][:100] + "..." if len(chunks[0]) > 100 else chunks[0]
+            print(f"🔍 First chunk preview: {first_chunk}")
+            
+            # Log chunk sizes for analysis
+            chunk_sizes = [len(c) for c in chunks]
+            avg_size = sum(chunk_sizes) / len(chunk_sizes)
+            print(f"📊 Chunk statistics: avg={avg_size:.0f}, min={min(chunk_sizes)}, max={max(chunk_sizes)}")
+        else:
+            print("⚠️ Semantic chunking returned empty chunks")
+            
+    except Exception as e:
+        print(f"⚠️ Semantic chunking failed with exception: {e}")
+        print(f"🔄 Falling back to traditional chunking with strategy: {strategy}")
+        chunks = chunk_text(
+            text,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            strategy=strategy,  # type: ignore[arg-type]
+        )
+        print(f"📄 Fallback chunking created {len(chunks)} chunks")
     if not chunks:
         return {"added": 0, "chunks": 0, "embedding_dim": None}
     # Use provider-aware embedding generation
@@ -301,19 +363,16 @@ def retrieve_and_answer(
                 selected_provider = get_selected_provider()
                 
                 if selected_provider == "groq" or is_groq_model(model_to_use):
-                    # Use Groq API
-                    cloud_client = CloudLLMClient()
-                    order_raw = cloud_client.generate(
+                    # Use Model Inference Service
+                    full_prompt = f"System: {rerank_system_prompt}\n\nUser: {rerank_prompt}"
+                    order_raw = call_model_inference_service(
+                        prompt=full_prompt,
                         model=model_to_use,
-                        messages=[
-                            {"role": "system", "content": rerank_system_prompt},
-                            {"role": "user", "content": rerank_prompt},
-                        ],
                         temperature=0.0,
                         max_tokens=64
                     )
                 else:
-                    # Ollama logic removed as it's no longer used
+                    # Fallback
                     order_raw = ""
                 
                 idxs = [int(x)-1 for x in re.findall(r"\d+", order_raw)]
@@ -356,21 +415,16 @@ def retrieve_and_answer(
             selected_provider = get_selected_provider()
             
             if selected_provider == "groq" or is_groq_model(model_to_use):
-                # Use Groq API
-                cloud_client = CloudLLMClient()
-                answer = cloud_client.generate(
+                # Use Model Inference Service
+                full_prompt = f"System: {system_prompt}\n\nUser: {user_prompt}"
+                answer = call_model_inference_service(
+                    prompt=full_prompt,
                     model=model_to_use,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
                     temperature=0.3,
                     max_tokens=1024
                 )
             else:
-                # Ollama logic removed, this path should ideally not be taken
-                # if all models are configured for Groq.
-                # Returning an empty answer as a fallback.
+                # Fallback
                 answer = "Model not configured for cloud provider."
 
         # Calculate total response time and update monitor
@@ -412,19 +466,16 @@ def generate_answer_from_context(retrieved_texts: list[str], query: str, generat
         selected_provider = get_selected_provider()
         
         if selected_provider == "groq" or is_groq_model(model_to_use):
-            # Use Groq API
-            cloud_client = CloudLLMClient()
-            return cloud_client.generate(
+            # Use Model Inference Service
+            full_prompt = f"System: {system_prompt}\n\nUser: {user_prompt}"
+            return call_model_inference_service(
+                prompt=full_prompt,
                 model=model_to_use,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
                 temperature=0.3,
                 max_tokens=1024
             )
         else:
-            # Ollama logic removed
+            # Fallback
             return "Model not configured for cloud provider."
     except Exception as e:
         error_msg = prompt_manager.get_error_message(detected_language, 'generation_error', str(e))
@@ -447,19 +498,16 @@ def direct_answer(query: str, generation_model: str | None = None) -> str:
         selected_provider = get_selected_provider()
         
         if selected_provider == "groq" or is_groq_model(model_to_use):
-            # Use Groq API
-            cloud_client = CloudLLMClient()
-            return cloud_client.generate(
+            # Use Model Inference Service
+            full_prompt = f"System: {system_prompt}\n\nUser: {query}"
+            return call_model_inference_service(
+                prompt=full_prompt,
                 model=model_to_use,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": query},
-                ],
                 temperature=0.4,
                 max_tokens=512
             )
         else:
-            # Ollama logic removed
+            # Fallback
             return "Model not configured for cloud provider."
     except Exception as e:
         error_msg = prompt_manager.get_error_message(detected_language, 'direct_answer_error', str(e))
@@ -543,19 +591,16 @@ def generate_multiple_answers(
             selected_provider = get_selected_provider()
             
             if selected_provider == "groq" or is_groq_model(model_to_use):
-                # Use Groq API
-                cloud_client = CloudLLMClient()
-                answer = cloud_client.generate(
+                # Use Model Inference Service
+                full_prompt = f"System: {system_prompt}\n\nUser: {user_prompt}"
+                answer = call_model_inference_service(
+                    prompt=full_prompt,
                     model=model_to_use,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
                     temperature=temperature,
                     max_tokens=1024
                 )
             else:
-                # Ollama logic removed
+                # Fallback
                 answer = "Model not configured for cloud provider."
             
             if answer:

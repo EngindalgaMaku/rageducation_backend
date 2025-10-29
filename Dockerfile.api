@@ -109,4 +109,4 @@ ENV MARKER_CACHE_DIR=/app/models \
 EXPOSE 8080
 
 # Default command: use smart startup script that chooses the best API version
-CMD ["python", "startup.py"]
+CMD ["python", "src/api/main.py"]

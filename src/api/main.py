@@ -324,12 +324,12 @@ async def upload_document(
 ):
     # Resolve store by session_id (backward-compatible path handling)
     # Temporary fix: use basic path resolution
-    from src.vector_store.faiss_store import FaissVectorStore
+    from src.vector_store.chroma_store import ChromaVectorStore
     import os
     os.makedirs("data/vector_db/sessions", exist_ok=True)
     safe = session_id.strip().replace(" ", "_") or "default"
-    index_path = os.path.join("data/vector_db/sessions", safe)
-    store = FaissVectorStore(index_path=index_path)
+    collection_name = f"session_{safe}"
+    store = ChromaVectorStore(collection_name=collection_name)
 
     content = await file.read()
     try:
@@ -352,14 +352,14 @@ async def upload_document(
 
 @app.post("/rag/query", response_model=RAGQueryResponse)
 def rag_query(req: RAGQueryRequest):
-    from src.vector_store.faiss_store import FaissVectorStore
+    from src.vector_store.chroma_store import ChromaVectorStore
     from src.app_logic import retrieve_and_answer, label_from_meta
     # Resolve store
     import os
     os.makedirs("data/vector_db/sessions", exist_ok=True)
     safe = req.session_id.strip().replace(" ", "_") or "default"
-    index_path = os.path.join("data/vector_db/sessions", safe)
-    store = FaissVectorStore(index_path=index_path)
+    collection_name = f"session_{safe}"
+    store = ChromaVectorStore(collection_name=collection_name)
 
     if not req.query or not req.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
@@ -391,7 +391,7 @@ def rag_query(req: RAGQueryRequest):
 async def convert_document_to_markdown(file: UploadFile = File(...)):
     """
     Convert uploaded document (PDF, DOCX, PPTX, XLSX) to Markdown format and save to data/markdown/ directory.
-    Uses Marker library with full format support.
+    Delegates PDF processing to the PDF Processing Service microservice.
     """
     supported_extensions = ['.pdf', '.docx', '.pptx', '.xlsx']
     file_ext = Path(file.filename).suffix.lower()
@@ -403,6 +403,11 @@ async def convert_document_to_markdown(file: UploadFile = File(...)):
         )
     
     try:
+        # Get PDF processor URL from environment variable directly
+        import requests
+        
+        pdf_processor_url = os.getenv('PDF_PROCESSOR_URL', 'http://localhost:8001')
+        
         # Create data/markdown directory if it doesn't exist
         markdown_dir = Path("data/markdown")
         markdown_dir.mkdir(parents=True, exist_ok=True)
@@ -410,42 +415,79 @@ async def convert_document_to_markdown(file: UploadFile = File(...)):
         # Read uploaded file content
         content = await file.read()
         
-        # Create temporary file for processing
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
-            tmp_file.write(content)
-            tmp_file.flush()
+        try:
+            # PDF processor URL already retrieved above
             
-            try:
-                # Process PDF with enhanced processor to get markdown
-                from src.document_processing.enhanced_pdf_processor import process_pdf_with_analysis
-                markdown_content, metadata = process_pdf_with_analysis(tmp_file.name)
-                
-                if not markdown_content:
-                    raise HTTPException(status_code=500, detail="Failed to extract content from PDF")
-                
-                # Generate markdown filename (remove .pdf extension, add .md)
-                base_filename = Path(file.filename).stem
-                markdown_filename = f"{base_filename}.md"
-                markdown_filepath = markdown_dir / markdown_filename
-                
-                # Save markdown content to file
-                with open(markdown_filepath, 'w', encoding='utf-8') as md_file:
-                    md_file.write(markdown_content)
-                
-                return PDFToMarkdownResponse(
-                    success=True,
-                    message=f"Document successfully converted to Markdown",
-                    markdown_filename=markdown_filename,
-                    metadata=metadata
+            # Prepare file for multipart upload to microservice
+            files = {
+                'file': (file.filename, content, file.content_type)
+            }
+            
+            # Send request to PDF Processing Service
+            response = requests.post(
+                f"{pdf_processor_url}/process",
+                files=files,
+                timeout=300  # 5 minutes timeout for PDF processing
+            )
+            
+            if response.status_code != 200:
+                error_detail = f"PDF processor service error: {response.status_code}"
+                if response.text:
+                    try:
+                        error_json = response.json()
+                        error_detail = error_json.get('detail', error_detail)
+                    except:
+                        error_detail = f"{error_detail} - {response.text[:200]}"
+                        
+                raise HTTPException(
+                    status_code=500,
+                    detail=error_detail
                 )
-                
-            finally:
-                # Clean up temporary file
-                try:
-                    os.unlink(tmp_file.name)
-                except:
-                    pass
+            
+            # Parse response from PDF processor
+            processor_result = response.json()
+            
+            # PDF Processing Service returns: {"content": "...", "metadata": {...}}
+            markdown_content = processor_result.get('content')
+            metadata = processor_result.get('metadata', {})
+            
+            if not markdown_content:
+                raise HTTPException(status_code=500, detail="Failed to extract content from document")
+            
+            # Generate markdown filename (remove original extension, add .md)
+            base_filename = Path(file.filename).stem
+            markdown_filename = f"{base_filename}.md"
+            markdown_filepath = markdown_dir / markdown_filename
+            
+            # Save markdown content to file
+            with open(markdown_filepath, 'w', encoding='utf-8') as md_file:
+                md_file.write(markdown_content)
+            
+            return PDFToMarkdownResponse(
+                success=True,
+                message=f"Document successfully converted to Markdown",
+                markdown_filename=markdown_filename,
+                metadata=metadata
+            )
+            
+        except requests.exceptions.ConnectionError:
+            raise HTTPException(
+                status_code=503,
+                detail="PDF Processing Service is not available. Please try again later."
+            )
+        except requests.exceptions.Timeout:
+            raise HTTPException(
+                status_code=504,
+                detail="PDF processing timed out. Please try with a smaller file."
+            )
+        except requests.exceptions.RequestException as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to communicate with PDF Processing Service: {str(e)}"
+            )
                     
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Document conversion failed: {str(e)}")
 
@@ -543,12 +585,12 @@ def add_markdown_documents_to_session(req: AddMarkdownDocumentsRequest):
             raise HTTPException(status_code=404, detail="Session not found")
         
         # Get the session's vector store
-        from src.vector_store.faiss_store import FaissVectorStore
+        from src.vector_store.chroma_store import ChromaVectorStore
         import os
         os.makedirs("data/vector_db/sessions", exist_ok=True)
         safe = req.session_id.strip().replace(" ", "_") or "default"
-        index_path = os.path.join("data/vector_db/sessions", safe)
-        store = FaissVectorStore(index_path=index_path)
+        collection_name = f"session_{safe}"
+        store = ChromaVectorStore(collection_name=collection_name)
         
         processed_count = 0
         total_chunks_added = 0
@@ -634,12 +676,12 @@ def configure_and_process_rag(req: RAGConfigureAndProcessRequest):
         _clear_session_data(req.session_id)
         
         # Get the session's vector store (will be recreated as needed)
-        from src.vector_store.faiss_store import FaissVectorStore
+        from src.vector_store.chroma_store import ChromaVectorStore
         import os
         os.makedirs("data/vector_db/sessions", exist_ok=True)
         safe = req.session_id.strip().replace(" ", "_") or "default"
-        index_path = os.path.join("data/vector_db/sessions", safe)
-        store = FaissVectorStore(index_path=index_path)
+        collection_name = f"session_{safe}"
+        store = ChromaVectorStore(collection_name=collection_name)
         
         documents_processed = 0
         total_chunks_created = 0
@@ -776,7 +818,7 @@ def _clear_session_data(session_id: str):
     Clear all existing data for a session to prevent duplicate chunks.
     This includes:
     - Deleting all document chunks from the database
-    - Deleting FAISS vector store files (.index, .chunks, .meta.jsonl)
+    - Clearing ChromaDB collection data
     - Resetting session metadata counts
     """
     try:
@@ -789,20 +831,19 @@ def _clear_session_data(session_id: str):
             cursor.execute("DELETE FROM document_chunks WHERE session_id = ?", (session_id,))
             rows_deleted = cursor.rowcount
         
-        # 2. Delete FAISS vector store files
-        vector_base_path = Path(f"data/vector_db/sessions/{session_id}")
-        vector_files = [
-            f"{vector_base_path}.index",
-            f"{vector_base_path}.chunks",
-            f"{vector_base_path}.meta.jsonl"
-        ]
-        
-        files_deleted = 0
-        for file_path in vector_files:
-            file_path_obj = Path(file_path)
-            if file_path_obj.exists():
-                file_path_obj.unlink()
-                files_deleted += 1
+        # 2. Clear ChromaDB collection data
+        from src.vector_store.chroma_store import ChromaVectorStore
+        try:
+            safe = session_id.strip().replace(" ", "_") or "default"
+            collection_name = f"session_{safe}"
+            store = ChromaVectorStore(collection_name=collection_name)
+            
+            # Reset the collection (delete and recreate)
+            store.reset_collection()
+            chroma_cleared = True
+        except Exception as chroma_error:
+            print(f"Error clearing ChromaDB collection: {chroma_error}")
+            chroma_cleared = False
         
         # 3. Reset session metadata counts
         professional_session_manager.update_session_metadata(
@@ -814,7 +855,7 @@ def _clear_session_data(session_id: str):
         # Log the clearing operation
         professional_session_manager._log_activity(
             session_id, "cleared",
-            f"Session data cleared: {rows_deleted} DB chunks, {files_deleted} vector files deleted"
+            f"Session data cleared: {rows_deleted} DB chunks, ChromaDB collection {'cleared' if chroma_cleared else 'failed to clear'}"
         )
         
     except Exception as e:
@@ -843,16 +884,49 @@ def add_text_content_to_store_with_chunk_storage(
     if not text_content:
         return {"added": 0, "chunks": 0, "embedding_dim": None}
     
-    # Import chunking function locally
+    # Import chunking function locally - USE SEMANTIC CHUNKING!
     from src.app_logic import chunk_text
+    from src.text_processing.semantic_chunker import create_semantic_chunks
     
-    # Chunk the text content
-    chunks = chunk_text(
-        text_content,
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-        strategy=strategy,
-    )
+    # Use GROQ-powered semantic chunking if available
+    try:
+        print(f"🧠 Using GROQ-powered semantic chunking...")
+        print(f"🔧 Text length: {len(text_content)}, target_size: {chunk_size}, overlap_ratio: {chunk_overlap / chunk_size}")
+        print(f"🔧 Fallback strategy: {strategy}")
+        
+        chunks = create_semantic_chunks(
+            text_content,
+            target_size=chunk_size,
+            overlap_ratio=chunk_overlap / chunk_size,
+            language="auto",
+            fallback_strategy=strategy
+        )
+        
+        # Verify if chunks are actually from semantic chunking or fallback
+        if chunks:
+            print(f"✅ Semantic chunking returned {len(chunks)} chunks")
+            
+            # Check first chunk characteristics to see if it's semantic or fallback
+            first_chunk = chunks[0][:100] + "..." if len(chunks[0]) > 100 else chunks[0]
+            print(f"🔍 First chunk preview: {first_chunk}")
+            
+            # Log chunk sizes for analysis
+            chunk_sizes = [len(c) for c in chunks]
+            avg_size = sum(chunk_sizes) / len(chunk_sizes)
+            print(f"📊 Chunk statistics: avg={avg_size:.0f}, min={min(chunk_sizes)}, max={max(chunk_sizes)}")
+        else:
+            print("⚠️ Semantic chunking returned empty chunks")
+            
+    except Exception as e:
+        print(f"⚠️ Semantic chunking failed with exception: {e}")
+        print(f"🔄 Falling back to traditional chunking with strategy: {strategy}")
+        chunks = chunk_text(
+            text_content,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            strategy=strategy,
+        )
+        print(f"📄 Fallback chunking created {len(chunks)} chunks")
     if not chunks:
         return {"added": 0, "chunks": 0, "embedding_dim": None}
     
@@ -871,7 +945,7 @@ def add_text_content_to_store_with_chunk_storage(
         return {"added": 0, "chunks": len(chunks), "embedding_dim": None}
     
     embedding_dim = len(embeddings) if embeddings and isinstance(embeddings, list) and embeddings else None
-    before = vector_store.index.ntotal if vector_store.index is not None else 0
+    before = vector_store.ntotal
     
     # Build per-chunk metadata similar to add_document_to_store
     def parse_marker(txt: str) -> dict:
@@ -925,7 +999,7 @@ def add_text_content_to_store_with_chunk_storage(
     # Store chunk text in database with global chunk indexing
     _store_document_chunks_in_db(session_id, filename, chunks, metadatas, global_chunk_index)
     
-    after = vector_store.index.ntotal if vector_store.index is not None else 0
+    after = vector_store.ntotal
     return {
         "added": max(0, after - before),
         "chunks": len(chunks),
@@ -1013,7 +1087,7 @@ def add_text_content_to_store(
         return {"added": 0, "chunks": len(chunks), "embedding_dim": None}
     
     embedding_dim = len(embeddings) if embeddings and isinstance(embeddings, list) and embeddings else None
-    before = vector_store.index.ntotal if vector_store.index is not None else 0
+    before = vector_store.ntotal
     
     # Build per-chunk metadata similar to add_document_to_store
     def parse_marker(txt: str) -> dict:
@@ -1064,7 +1138,7 @@ def add_text_content_to_store(
     vector_store.add_documents(chunks, embeddings, metadatas=metadatas)
     vector_store.save_store()
     
-    after = vector_store.index.ntotal if vector_store.index is not None else 0
+    after = vector_store.ntotal
     return {
         "added": max(0, after - before),
         "chunks": len(chunks),

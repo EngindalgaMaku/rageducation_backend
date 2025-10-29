@@ -28,6 +28,9 @@ class RAGConfig:
         # Model Configuration
         self._setup_model_config()
         
+        # Microservices Configuration
+        self._setup_microservices_config()
+        
     def _setup_database_config(self):
         """Setup database configuration with cloud support"""
         
@@ -91,6 +94,24 @@ class RAGConfig:
             'timeout_seconds': int(os.getenv('MARKER_TIMEOUT_SECONDS', '900'))
         }
     
+    def _setup_microservices_config(self):
+        """Setup microservices configuration"""
+        
+        # Cloud vs Local environment handling
+        if self.is_cloud:
+            # Production: Use full Cloud Run service URLs
+            default_pdf_url = 'https://pdf-processor-service-url.run.app'
+            default_model_inference_url = 'https://model-inference-service-url.run.app'
+        else:
+            # Local development: Use docker-compose service names
+            default_pdf_url = 'http://pdf-processor:8001'
+            default_model_inference_url = 'http://model-inferencer:8002'
+            
+        self.microservices_config = {
+            'pdf_processor_url': os.getenv('PDF_PROCESSOR_URL', default_pdf_url),
+            'model_inference_url': os.getenv('MODEL_INFERENCE_URL', default_model_inference_url)
+        }
+    
     def get_database_url(self) -> str:
         """Get database connection URL/path"""
         
@@ -132,7 +153,8 @@ class RAGConfig:
             'database_type': self.database_config['type'],
             'storage_type': self.storage_config['type'],
             'embedding_provider': self.model_config['embedding_provider'],
-            'llm_provider': self.model_config['llm_provider']
+            'llm_provider': self.model_config['llm_provider'],
+            'pdf_processor_url': self.microservices_config['pdf_processor_url']
         }
 
 # Global configuration instance
@@ -150,6 +172,18 @@ def get_database_config() -> Dict[str, Any]:
 def get_storage_config() -> Dict[str, Any]:
     """Get storage configuration"""
     return config.storage_config
+
+def get_microservices_config() -> Dict[str, Any]:
+    """Get microservices configuration"""
+    return config.microservices_config
+
+def get_pdf_processor_url() -> str:
+    """Get PDF processor service URL"""
+    return config.microservices_config['pdf_processor_url']
+
+def get_model_inference_url() -> str:
+    """Get Model Inference service URL"""
+    return config.microservices_config['model_inference_url']
 
 def is_cloud_environment() -> bool:
     """Check if running in cloud environment"""

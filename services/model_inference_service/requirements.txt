@@ -1,0 +1,24 @@
+# Model Inference Service Requirements
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.5.0
+
+# LLM providers
+ollama>=0.1.7
+groq
+
+# Embedding generation
+sentence-transformers>=2.2.2
+
+# HTTP requests
+requests>=2.31.0
+
+# Configuration
+python-dotenv
+
+# Logging
+colorlog>=6.7.0
+
+# Scientific computing for embeddings
+numpy
+scipy>=1.11.3

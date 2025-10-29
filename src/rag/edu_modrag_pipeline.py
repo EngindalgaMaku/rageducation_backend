@@ -20,7 +20,7 @@ from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 from src.rag.query_router import QueryRouter, QueryType, QueryComplexity, RAGChainType
 from src.rag.rag_chains import RAGChainFactory, BaseRAGChain
-from src.vector_store.faiss_store import FaissVectorStore
+from src.vector_store.chroma_store import ChromaVectorStore
 from src.analytics.performance_tracker import PerformanceTracker, PerformanceMetric
 from src.utils.logger import get_logger
 from src.utils.cache import get_cache
@@ -64,16 +64,16 @@ class EduModRAGPipeline:
     and execution with appropriate RAG chains.
     """
     
-    def __init__(self, config: Dict[str, Any], faiss_store: FaissVectorStore):
+    def __init__(self, config: Dict[str, Any], chroma_store: ChromaVectorStore):
         """
         Initialize the Edu-ModRAG pipeline.
         
         Args:
             config: System configuration dictionary
-            faiss_store: Vector store instance
+            chroma_store: ChromaDB vector store instance
         """
         self.config = config
-        self.faiss_store = faiss_store
+        self.chroma_store = chroma_store
         self.logger = get_logger(__name__, config)
         
         # Initialize core components
@@ -268,7 +268,7 @@ class EduModRAGPipeline:
         # Get or create chain instance (caching for performance)
         if chain_type not in self.chain_instances:
             self.chain_instances[chain_type] = RAGChainFactory.create_chain(
-                chain_type, self.config, self.faiss_store
+                chain_type, self.config, self.chroma_store
             )
         
         chain = self.chain_instances[chain_type]

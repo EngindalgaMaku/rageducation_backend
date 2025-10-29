@@ -70,19 +70,40 @@ _setup_marker_environment()
 def check_marker_availability():
     """Marker kütüphanesinin mevcut olup olmadığını kontrol et"""
     try:
-        # Yeni marker API'sini kontrol et - PDF ve diğer formatları test et
+        # Yeni marker API'sini kontrol et - PDF temel desteği
         from marker.converters.pdf import PdfConverter
         from marker.models import create_model_dict
         from marker.output import text_from_rendered
         from marker.config.parser import ConfigParser
         
-        # Test additional format support
+        # Test additional format support - these may not exist in current version
+        additional_formats = []
+        
+        # Check for DOCX support
         try:
             from marker.converters.docx import DocxConverter
-            from marker.converters.pptx import PptxConverter
-            logger.info("✅ Marker full format support available (PDF, DOCX, PPTX, XLSX)")
+            additional_formats.append("DOCX")
         except ImportError:
-            logger.info("⚠️ Marker basic support available (PDF only)")
+            pass
+            
+        # Check for PPTX support
+        try:
+            from marker.converters.pptx import PptxConverter
+            additional_formats.append("PPTX")
+        except ImportError:
+            pass
+            
+        # Check for XLSX support
+        try:
+            from marker.converters.xlsx import XlsxConverter
+            additional_formats.append("XLSX")
+        except ImportError:
+            pass
+        
+        if additional_formats:
+            logger.info(f"✅ Marker enhanced support available (PDF + {', '.join(additional_formats)})")
+        else:
+            logger.info("✅ Marker PDF support available (optimized for high-quality PDF processing)")
         
         return True
     except ImportError:

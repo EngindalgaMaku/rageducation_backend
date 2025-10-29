@@ -30,6 +30,7 @@ In Google Cloud Console, go to "APIs & Services" > "Enable APIs":
 - Container Registry API
 - Cloud Build API
 - Artifact Registry API
+- Cloud Storage API (for ChromaDB persistence)
 ```
 
 ### Step 4: Install Google Cloud CLI
@@ -70,7 +71,20 @@ docker tag rag3-api-fixed gcr.io/YOUR-PROJECT-ID/rag3-thesis:latest
 # 2. Push to Google Container Registry
 docker push gcr.io/YOUR-PROJECT-ID/rag3-thesis:latest
 
-# 3. Deploy to Cloud Run (Academic Optimized)
+# 3. Deploy ChromaDB (Vector Database)
+gcloud run deploy chromadb \
+  --image chromadb/chroma:latest \
+  --platform managed \
+  --region europe-west1 \
+  --no-allow-unauthenticated \
+  --memory 4Gi \
+  --cpu 2 \
+  --port 8000
+
+# 4. Get ChromaDB URL
+CHROMADB_URL=$(gcloud run services describe chromadb --platform managed --region europe-west1 --format "value(status.url)")
+
+# 5. Deploy to Cloud Run (Academic Optimized with ChromaDB)
 gcloud run deploy rag3-thesis \
   --image gcr.io/YOUR-PROJECT-ID/rag3-thesis:latest \
   --platform managed \
@@ -82,10 +96,13 @@ gcloud run deploy rag3-thesis \
   --max-instances 3 \
   --min-instances 0 \
   --concurrency 5 \
-  --port 8000
+  --port 8000 \
+  --set-env-vars="CHROMADB_URL=$CHROMADB_URL"
 ```
 
-## 💰 Cost Management for Students
+**📝 Note:** For production, consider persistent storage for ChromaDB using Cloud Storage volumes.
+
+## Cost Management for Students
 
 ### Academic Budget Settings:
 

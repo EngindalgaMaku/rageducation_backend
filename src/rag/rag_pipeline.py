@@ -2,6 +2,7 @@ import json
 from typing import Dict, Any, List
 import hashlib
 import time
+import requests
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 # Optional import for ollama - handle gracefully when not available (e.g., in tests)
@@ -11,11 +12,11 @@ try:
 except ImportError:
     ollama = None
     OLLAMA_AVAILABLE = False
-from src.vector_store.faiss_store import FaissVectorStore
+from src.vector_store.chroma_store import ChromaVectorStore
 from src.embedding.embedding_generator import generate_embeddings
 from src.utils.logger import get_logger
 from src.utils.cache import get_cache
-from src.config import is_cloud_environment
+from src.config import is_cloud_environment, get_model_inference_url
 from src.utils.memory_manager import get_memory_manager
 from src.rag.re_ranker import ReRanker
 
@@ -24,16 +25,16 @@ class RAGPipeline:
     Implements the Retrieval-Augmented Generation (RAG) pipeline using Ollama.
     """
 
-    def __init__(self, config: Dict[str, Any], faiss_store: FaissVectorStore):
+    def __init__(self, config: Dict[str, Any], chroma_store: ChromaVectorStore):
         """
         Initializes the RAGPipeline.
 
         Args:
             config (Dict[str, Any]): Configuration dictionary.
-            faiss_store (FAISSStore): The FAISS vector store instance.
+            chroma_store (ChromaVectorStore): The ChromaDB vector store instance.
         """
         self.config = config
-        self.faiss_store = faiss_store
+        self.chroma_store = chroma_store
         self.logger = get_logger(__name__, self.config)
         
         # Initialize cache
@@ -42,8 +43,8 @@ class RAGPipeline:
         # Initialize memory manager
         self.memory_manager = get_memory_manager(config)
         
-        # Initialize Ollama client with retries
-        self.ollama_client = self._init_ollama_client()
+        # Initialize Model Inference Service URL
+        self.model_inference_url = get_model_inference_url()
         
         # Initialize ReRanker
         self.reranker = None
@@ -53,35 +54,19 @@ class RAGPipeline:
                 self.logger.warning("ReRanker enabled in config, but model failed to load. Re-ranking will be disabled.")
                 self.reranker = None
         
-    def _init_ollama_client(self):
-        """Initialize Ollama client with retry logic, skipping in cloud environments."""
-        if is_cloud_environment():
-            self.logger.info("Cloud environment detected, skipping Ollama client initialization.")
-            return None
-    
-        # Check if ollama module is available
-        if not OLLAMA_AVAILABLE:
-            self.logger.warning("Ollama module not available - running in test/development mode")
-            return None
-                
-        max_retries = 3
-        retry_delay = 2
-        
-        for attempt in range(max_retries):
-            try:
-                client = ollama.Client(host=self.config.get("ollama_base_url"))
-                # Test connection with timeout
-                client.list()
-                self.logger.info(f"Successfully connected to Ollama at {self.config.get('ollama_base_url')}")
-                return client
-            except Exception as e:
-                self.logger.warning(f"Attempt {attempt + 1} failed to connect to Ollama: {e}")
-                if attempt < max_retries - 1:
-                    time.sleep(retry_delay)
-                    retry_delay *= 2  # Exponential backoff
-                else:
-                    self.logger.warning("Could not connect to Ollama. Running without local models.")
-                    return None
+    def _test_model_inference_service(self):
+        """Test connection to Model Inference Service."""
+        try:
+            health_response = requests.get(f"{self.model_inference_url}/health", timeout=5)
+            if health_response.status_code == 200:
+                self.logger.info(f"Successfully connected to Model Inference Service at {self.model_inference_url}")
+                return True
+            else:
+                self.logger.warning(f"Model Inference Service health check failed: {health_response.status_code}")
+                return False
+        except Exception as e:
+            self.logger.warning(f"Could not connect to Model Inference Service at {self.model_inference_url}: {e}")
+            return False
 
     def retrieve(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
         """
@@ -120,7 +105,7 @@ class RAGPipeline:
                 self.logger.error("Failed to generate query embedding.")
                 return []
             
-            search_results = self.faiss_store.search(query_embedding, top_k)
+            search_results = self.chroma_store.search(query_embedding, top_k)
             # Convert search results to expected format
             retrieved_chunks = []
             for text, score, metadata in search_results:
@@ -189,7 +174,7 @@ class RAGPipeline:
 
     def generate(self, query: str, context: List[Dict[str, Any]]) -> str:
         """
-        Generates an answer using the Ollama language model with the retrieved context.
+        Generates an answer using the Model Inference Service with the retrieved context.
         Includes caching and timeout handling.
 
         Args:
@@ -199,9 +184,6 @@ class RAGPipeline:
         Returns:
             str: The generated answer.
         """
-        if not self.ollama_client:
-            return "Üzgünüm, Ollama istemcisi mevcut olmadığından cevap oluşturulamıyor."
-
         # Check cache first
         cache_key = None
         if self.cache:
@@ -215,7 +197,7 @@ class RAGPipeline:
                 self.logger.debug(f"Cache retrieval failed during generation: {e}")
                 cache_key = None
 
-        self.logger.info("Generating answer using Ollama LLM.")
+        self.logger.info("Generating answer using Model Inference Service.")
         
         # Safely extract context text, handling malformed context
         try:
@@ -258,18 +240,18 @@ class RAGPipeline:
             "Cevaplarını kısa ve doğrudan tut. Sadece Türkçe cevap ver."
         )
         
-        user_prompt = f"""
-        Bağlam:
-        {context_str}
+        full_prompt = f"""System: {system_prompt}
 
-        Soru: {query}
-        Cevap:
-        """
+User: Bağlam:
+{context_str}
+
+Soru: {query}
+Cevap:"""
 
         try:
             # Use ThreadPoolExecutor for timeout control
             with ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(self._call_ollama, query, system_prompt, user_prompt)
+                future = executor.submit(self._call_model_inference_service, full_prompt)
                 try:
                     response = future.result(timeout=self.config.get("ollama_request_timeout", 120))
                     
@@ -282,59 +264,54 @@ class RAGPipeline:
                     
                     return response
                 except TimeoutError:
-                    self.logger.error("Ollama request timed out")
+                    self.logger.error("Model Inference Service request timed out")
                     return "Üzgünüm, istek zaman aşımına uğradı. Lütfen daha kısa bir soru deneyin."
                 except Exception as e:
-                    self.logger.error(f"Error during Ollama API call: {e}")
+                    self.logger.error(f"Error during Model Inference Service API call: {e}")
                     return "Üzgünüm, cevap oluşturulurken bir hata oluştu."
         except Exception as e:
-            self.logger.error(f"Error setting up Ollama request: {e}")
+            self.logger.error(f"Error setting up Model Inference Service request: {e}")
             return "Üzgünüm, cevap oluşturulurken bir hata oluştu."
 
-    def _call_ollama(self, query: str, system_prompt: str, user_prompt: str) -> str:
-        """Make the actual Ollama API call."""
+    def _call_model_inference_service(self, prompt: str) -> str:
+        """Make the actual Model Inference Service API call."""
         try:
-            response = self.ollama_client.chat(
-                model=self.config.get("ollama_generation_model"),
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                options={
-                    "temperature": self.config.get("temperature", 0.7),
-                    "num_predict": self.config.get("max_tokens", 512),
-                    "top_k": self.config.get("top_k", 40),
-                    "top_p": self.config.get("top_p", 0.9),
-                    "repeat_penalty": self.config.get("repeat_penalty", 1.1),
-                }
+            # Prepare request data for Model Inference Service
+            request_data = {
+                "prompt": prompt,
+                "model": self.config.get("ollama_generation_model", "llama-3.1-8b-instant"),
+                "temperature": self.config.get("temperature", 0.7),
+                "max_tokens": self.config.get("max_tokens", 512)
+            }
+            
+            # Make HTTP request to Model Inference Service
+            response = requests.post(
+                f"{self.model_inference_url}/models/generate",
+                json=request_data,
+                timeout=30
             )
             
-            # Safely extract response content, handling both real responses and mock objects
-            if isinstance(response, dict) and 'message' in response:
-                message = response['message']
-                if isinstance(message, dict) and 'content' in message:
-                    content = message['content']
-                    if isinstance(content, str):
-                        return content.strip()
-                    else:
-                        return str(content).strip()
+            if response.status_code == 200:
+                result = response.json()
+                return result.get("response", "").strip()
+            else:
+                self.logger.error(f"Model Inference Service API error: {response.status_code} - {response.text}")
+                return "Üzgünüm, cevap oluşturulurken bir hata oluştu."
             
-            # Fallback for mock objects or unexpected response structures
-            self.logger.warning("Received unexpected response structure from Ollama")
-            return "Test response generated successfully."
-            
+        except requests.exceptions.ConnectionError:
+            self.logger.error("Could not connect to Model Inference Service")
+            return "Üzgünüm, model servisi ile bağlantı kurulamadı."
+        except requests.exceptions.Timeout:
+            self.logger.error("Model Inference Service request timed out")
+            return "Üzgünüm, istek zaman aşımına uğradı."
         except Exception as e:
-            self.logger.error(f"Error in Ollama API call: {e}")
+            self.logger.error(f"Error in Model Inference Service API call: {e}")
             return "Üzgünüm, cevap oluşturulurken bir hata oluştu."
 
     def _generate_multiple_queries(self, query: str) -> List[str]:
         """
-        Generates multiple search queries from a single user query using an LLM.
+        Generates multiple search queries from a single user query using the Model Inference Service.
         """
-        if not self.ollama_client:
-            self.logger.warning("Ollama client not available, cannot generate multiple queries.")
-            return [query]
-
         prompt = f"""
         You are an AI language model assistant. Your task is to generate 3 different versions of the given user
         question to retrieve relevant documents from a vector database. By generating multiple perspectives on the user
@@ -347,15 +324,27 @@ class RAGPipeline:
         """
         
         try:
-            response = self.ollama_client.chat(
-                model=self.config.get("ollama_generation_model"),
-                messages=[{"role": "user", "content": prompt}],
-                options={"temperature": 0.3},
-                format="json" # Request JSON output
+            request_data = {
+                "prompt": prompt,
+                "model": self.config.get("ollama_generation_model", "llama-3.1-8b-instant"),
+                "temperature": 0.3,
+                "max_tokens": 256
+            }
+            
+            response = requests.post(
+                f"{self.model_inference_url}/models/generate",
+                json=request_data,
+                timeout=30
             )
             
-            # The response content should be a JSON string
-            response_content = response.get('message', {}).get('content', '[]')
+            if response.status_code != 200:
+                self.logger.warning(f"Model Inference Service error in multi-query generation: {response.status_code}")
+                return [query]
+            
+            result = response.json()
+            response_content = result.get("response", "[]")
+            
+            # Try to parse JSON response
             generated_queries = json.loads(response_content)
             
             if isinstance(generated_queries, list) and all(isinstance(q, str) for q in generated_queries):
@@ -364,10 +353,10 @@ class RAGPipeline:
                 # Remove duplicates
                 return list(dict.fromkeys(queries))
             else:
-                self.logger.warning("LLM did not return a valid list of strings for multi-query. Falling back to original query.")
+                self.logger.warning("Model did not return a valid list of strings for multi-query. Falling back to original query.")
                 return [query]
 
-        except (json.JSONDecodeError, Exception) as e:
+        except (json.JSONDecodeError, requests.exceptions.RequestException, Exception) as e:
             self.logger.error(f"Failed to generate or parse multiple queries: {e}")
             return [query] # Fallback to the original query
 
